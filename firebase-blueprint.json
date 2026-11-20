@@ -1,0 +1,215 @@
+{
+  "entities": {
+    "UserRoot": {
+      "title": "User Root Document",
+      "description": "Non-PII root ownership anchor for a verified CloudPrep user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Authentication UID matching the document ID."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when user anchor was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when user anchor was last touched."
+        }
+      },
+      "required": ["uid", "createdAt", "updatedAt"]
+    },
+    "UserPrivateProfile": {
+      "title": "User Private Profile",
+      "description": "Isolated PII profile record strictly accessible only by the owning user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Authentication UID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Verified account email address."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Display name from Google OAuth."
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Avatar URL from Google OAuth."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "UserStudyProgress": {
+      "title": "User Study Progress",
+      "description": "Persisted CLF-C02 services reviewed, labs solved, achievements claimed, SM-2 SRS state, and arcade stats.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owning Firebase Auth UID."
+        },
+        "reviewedServices": {
+          "type": "array",
+          "description": "Reviewed AWS service IDs (max 200)."
+        },
+        "completedScenarios": {
+          "type": "array",
+          "description": "Completed practice lab scenario IDs (max 100)."
+        },
+        "perfectScenarios": {
+          "type": "array",
+          "description": "First-try perfect practice lab scenario IDs (max 100)."
+        },
+        "claimedAchievements": {
+          "type": "array",
+          "description": "Claimed achievement badge IDs (max 50)."
+        },
+        "flashcardConfidence": {
+          "type": "object",
+          "description": "Map of flashcard ID to confidence level (review, familiar, mastered)."
+        },
+        "flashcardSrs": {
+          "type": "object",
+          "description": "Map of flashcard ID to SM-2 spaced repetition state."
+        },
+        "quizSrs": {
+          "type": "object",
+          "description": "Map of quiz question ID to SM-2 spaced repetition state."
+        },
+        "arcade": {
+          "type": "object",
+          "description": "Gamification XP, streak, daily goal, dailyXpHistory, optional dailyChallenge* status fields, and arcade high scores."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "reviewedServices",
+        "completedScenarios",
+        "perfectScenarios",
+        "claimedAchievements",
+        "flashcardConfidence",
+        "flashcardSrs",
+        "quizSrs",
+        "arcade",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "QuizAttempt": {
+      "title": "Quiz Attempt Record",
+      "description": "Immutable record of a completed CLF-C02 quiz, mock exam, SRS session, or arcade sprint.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owning Firebase Auth UID."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["drill", "practice", "mock", "srs", "blitz"],
+          "description": "Quiz or arcade mode."
+        },
+        "domainFilter": {
+          "type": "string",
+          "enum": ["all", "domain-1", "domain-2", "domain-3", "domain-4"],
+          "description": "Target CLF-C02 exam domain filter."
+        },
+        "correctCount": {
+          "type": "integer",
+          "description": "Number of correct answers (0 to 500)."
+        },
+        "totalCount": {
+          "type": "integer",
+          "description": "Total questions in attempt (1 to 500)."
+        },
+        "scaledScore": {
+          "type": "integer",
+          "description": "CLF-C02 scaled score (100 to 1000)."
+        },
+        "dateIso": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 40,
+          "description": "Client ISO timestamp for display sorting."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when attempt was persisted."
+        }
+      },
+      "required": [
+        "uid",
+        "mode",
+        "domainFilter",
+        "correctCount",
+        "totalCount",
+        "scaledScore",
+        "dateIso",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserRoot" },
+      "description": "Root ownership anchor for a verified user (non-PII)."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Private PII profile document (`profile`) strictly restricted to owning user."
+    },
+    "/users/{userId}/progress/{docId}": {
+      "schema": { "$ref": "#/entities/UserStudyProgress" },
+      "description": "Synchronized CLF-C02 study progress state (`current`) belonging to the user."
+    },
+    "/users/{userId}/quizAttempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/QuizAttempt" },
+      "description": "Per-user quiz and arcade attempt history records."
+    }
+  }
+}

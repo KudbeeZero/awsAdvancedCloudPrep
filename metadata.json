@@ -1,0 +1,6 @@
+{
+  "name": "CloudPrep CLF-C02",
+  "description": "AWS Certified Cloud Practitioner (CLF-C02) interactive study guide with service deep-dives, hands-on architecture labs, domain quizzes, and spaced-repetition flashcards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,308 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function userAnchorExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    function isValidStringList(listVal, maxLen) {
+      return listVal is list
+        && listVal.size() <= maxLen
+        && (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() >= 1 && listVal[0].size() <= 64));
+    }
+
+    function isValidArcade(arcade) {
+      return arcade is map
+        && arcade.keys().hasAll([
+          'xp',
+          'bestBlitzScore',
+          'bestSurvivalStreak',
+          'longestCombo',
+          'gamesPlayed',
+          'streakDays',
+          'lastActiveDate',
+          'dailyXp',
+          'dailyDate'
+        ])
+        && arcade.keys().hasOnly([
+          'xp',
+          'bestBlitzScore',
+          'bestSurvivalStreak',
+          'longestCombo',
+          'gamesPlayed',
+          'streakDays',
+          'lastActiveDate',
+          'dailyXp',
+          'dailyDate',
+          'dailyGoalBonusDate',
+          'dailyXpHistory',
+          'dailyChallengeDate',
+          'dailyChallengeScore',
+          'dailyChallengeCorrect',
+          'dailyChallengeTotal'
+        ])
+        && arcade.xp is int && arcade.xp >= 0 && arcade.xp <= 1000000
+        && arcade.bestBlitzScore is int && arcade.bestBlitzScore >= 0 && arcade.bestBlitzScore <= 1000000
+        && arcade.bestSurvivalStreak is int && arcade.bestSurvivalStreak >= 0 && arcade.bestSurvivalStreak <= 5000
+        && arcade.longestCombo is int && arcade.longestCombo >= 0 && arcade.longestCombo <= 5000
+        && arcade.gamesPlayed is int && arcade.gamesPlayed >= 0 && arcade.gamesPlayed <= 100000
+        && arcade.streakDays is int && arcade.streakDays >= 0 && arcade.streakDays <= 10000
+        && arcade.dailyXp is int && arcade.dailyXp >= 0 && arcade.dailyXp <= 100000
+        && arcade.lastActiveDate is string && arcade.lastActiveDate.size() <= 10
+        && arcade.dailyDate is string && arcade.dailyDate.size() <= 10
+        && (!('dailyGoalBonusDate' in arcade) || (arcade.dailyGoalBonusDate is string && arcade.dailyGoalBonusDate.size() <= 10))
+        && (!('dailyXpHistory' in arcade) || (arcade.dailyXpHistory is map && arcade.dailyXpHistory.keys().size() <= 90))
+        && (!('dailyChallengeDate' in arcade) || (arcade.dailyChallengeDate is string && arcade.dailyChallengeDate.size() <= 10))
+        && (!('dailyChallengeScore' in arcade) || (arcade.dailyChallengeScore is int && arcade.dailyChallengeScore >= 0 && arcade.dailyChallengeScore <= 100000))
+        && (!('dailyChallengeCorrect' in arcade) || (arcade.dailyChallengeCorrect is int && arcade.dailyChallengeCorrect >= 0 && arcade.dailyChallengeCorrect <= 20))
+        && (!('dailyChallengeTotal' in arcade) || (arcade.dailyChallengeTotal is int && arcade.dailyChallengeTotal >= 1 && arcade.dailyChallengeTotal <= 20));
+    }
+
+    function isValidUserRoot(data, userId) {
+      return data.keys().hasAll(['uid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoUrl', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStudyProgress(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'reviewedServices',
+          'completedScenarios',
+          'perfectScenarios',
+          'claimedAchievements',
+          'flashcardConfidence',
+          'flashcardSrs',
+          'quizSrs',
+          'arcade',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'reviewedServices',
+          'completedScenarios',
+          'perfectScenarios',
+          'claimedAchievements',
+          'flashcardConfidence',
+          'flashcardSrs',
+          'quizSrs',
+          'arcade',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && isValidStringList(data.reviewedServices, 200)
+        && isValidStringList(data.completedScenarios, 100)
+        && isValidStringList(data.perfectScenarios, 100)
+        && isValidStringList(data.claimedAchievements, 50)
+        && data.flashcardConfidence is map
+        && data.flashcardConfidence.keys().size() <= 250
+        && data.flashcardSrs is map
+        && data.flashcardSrs.keys().size() <= 250
+        && data.quizSrs is map
+        && data.quizSrs.keys().size() <= 300
+        && isValidArcade(data.arcade)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidQuizAttempt(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'mode',
+          'domainFilter',
+          'correctCount',
+          'totalCount',
+          'scaledScore',
+          'dateIso',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'mode',
+          'domainFilter',
+          'correctCount',
+          'totalCount',
+          'scaledScore',
+          'dateIso',
+          'createdAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.mode is string
+        && data.mode in ['drill', 'practice', 'mock', 'srs', 'blitz']
+        && data.domainFilter is string
+        && data.domainFilter in ['all', 'domain-1', 'domain-2', 'domain-3', 'domain-4']
+        && data.correctCount is int
+        && data.correctCount >= 0
+        && data.correctCount <= 500
+        && data.totalCount is int
+        && data.totalCount >= 1
+        && data.totalCount <= 500
+        && data.correctCount <= data.totalCount
+        && data.scaledScore is int
+        && data.scaledScore >= 100
+        && data.scaledScore <= 1000
+        && data.dateIso is string
+        && data.dateIso.size() >= 10
+        && data.dateIso.size() <= 40
+        && data.createdAt is timestamp;
+    }
+
+    // Non-PII User Root Anchor
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserRoot(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserRoot(incoming(), userId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt'])
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+
+      // Split Collection Strategy: Isolated Private PII Profile
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && docId == 'profile' && isOwner(userId);
+        allow list: if false;
+        allow create: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'profile'
+          && isOwner(userId)
+          && isValidUserProfile(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow update: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'profile'
+          && isOwner(userId)
+          && isValidUserProfile(incoming(), userId)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoUrl', 'updatedAt'])
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow delete: if false;
+      }
+
+      // User Study Progress Document ('current')
+      match /progress/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && docId == 'current' && isOwner(userId);
+        allow list: if false;
+        allow create: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'current'
+          && isOwner(userId)
+          && isValidStudyProgress(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow update: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'current'
+          && isOwner(userId)
+          && isValidStudyProgress(incoming(), userId)
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'reviewedServices',
+              'completedScenarios',
+              'perfectScenarios',
+              'claimedAchievements',
+              'flashcardConfidence',
+              'flashcardSrs',
+              'quizSrs',
+              'arcade',
+              'updatedAt'
+            ])
+          )
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow delete: if isValidId(userId) && isValidId(docId) && docId == 'current' && isOwner(userId);
+      }
+
+      // Immutable Per-User Quiz & Arcade Attempt History
+      match /quizAttempts/{attemptId} {
+        allow get: if isValidId(userId) && isValidId(attemptId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().uid == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(attemptId)
+          && isOwner(userId)
+          && isValidQuizAttempt(incoming(), userId)
+          && incoming().createdAt == request.time
+          && userAnchorExists(userId);
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(attemptId) && isOwner(userId);
+      }
+    }
+  }
+}
