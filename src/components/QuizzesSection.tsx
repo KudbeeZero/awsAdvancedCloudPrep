@@ -525,7 +525,7 @@ export function QuizzesSection({
               onClick={toggleHaptics}
               aria-pressed={hapticsOn}
               aria-label={hapticsOn ? 'Disable haptic feedback' : 'Enable haptic feedback'}
-              className="inline-flex items-center gap-1.5 px-2.5 min-h-[38px] font-sans font-semibold text-xs border border-slate-200 rounded-lg bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 min-h-[44px] font-sans font-semibold text-xs border border-slate-200 rounded-lg bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
             >
               <Vibrate
                 className={`w-3.5 h-3.5 ${hapticsOn ? 'text-[#C2410C]' : 'text-slate-400'}`}
@@ -537,7 +537,7 @@ export function QuizzesSection({
               type="button"
               onClick={toggleSound}
               aria-label={soundOn ? 'Mute sound effects' : 'Enable sound effects'}
-              className="inline-flex items-center gap-1.5 px-2.5 min-h-[38px] font-sans font-semibold text-xs border border-slate-200 rounded-lg bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 min-h-[44px] font-sans font-semibold text-xs border border-slate-200 rounded-lg bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
             >
               {soundOn ? (
                 <Volume2 className="w-3.5 h-3.5 text-[#C2410C]" aria-hidden="true" />
@@ -681,7 +681,7 @@ export function QuizzesSection({
               <button
                 type="button"
                 onClick={() => void handleGenerateFreshSet(freshDomain, freshCount)}
-                className="px-3 min-h-[34px] font-semibold bg-white border border-rose-200 rounded-md text-rose-800 hover:bg-rose-100 cursor-pointer"
+                className="px-3 min-h-[44px] font-semibold bg-white border border-rose-200 rounded-md text-rose-800 hover:bg-rose-100 cursor-pointer"
               >
                 Retry
               </button>
@@ -1061,7 +1061,7 @@ export function QuizzesSection({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {mode === 'mock' && (
               <span className="inline-flex items-center gap-1.5 text-xs font-mono tabular-nums font-semibold text-slate-800 mr-1">
                 <Clock className="w-3.5 h-3.5 text-[#C2410C]" aria-hidden="true" />
@@ -1071,7 +1071,8 @@ export function QuizzesSection({
             <button
               type="button"
               onClick={() => setMobileNavOpen((o) => !o)}
-              className="lg:hidden inline-flex items-center gap-1 px-2.5 min-h-[40px] text-xs font-semibold rounded-lg border border-slate-200 bg-slate-50 text-slate-700 cursor-pointer font-mono tabular-nums"
+              aria-expanded={mobileNavOpen}
+              className="lg:hidden inline-flex items-center gap-1 px-3 min-h-[44px] text-xs font-semibold rounded-lg border border-slate-200 bg-slate-50 text-slate-700 cursor-pointer font-mono tabular-nums whitespace-nowrap"
             >
               Map ({answeredCount}/{sessionQuestions.length})
             </button>
@@ -1079,7 +1080,7 @@ export function QuizzesSection({
               <button
                 type="button"
                 onClick={onRequestHint}
-                className="inline-flex items-center gap-1.5 px-3 min-h-[40px] text-xs font-semibold rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-[#C2410C] transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 min-h-[44px] text-xs font-semibold rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-[#C2410C] transition-colors cursor-pointer whitespace-nowrap"
               >
                 <Lightbulb className="w-3.5 h-3.5" aria-hidden="true" />
                 Hint
@@ -1090,7 +1091,7 @@ export function QuizzesSection({
               onClick={toggleHaptics}
               aria-pressed={hapticsOn}
               aria-label={hapticsOn ? 'Disable haptic feedback' : 'Enable haptic feedback'}
-              className="inline-flex items-center justify-center min-w-[40px] min-h-[40px] rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
+              className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
             >
               <Vibrate
                 className={`w-4 h-4 ${hapticsOn ? 'text-[#C2410C]' : 'text-slate-400'}`}
@@ -1101,7 +1102,7 @@ export function QuizzesSection({
               type="button"
               onClick={toggleSound}
               aria-label={soundOn ? 'Mute sound effects' : 'Enable sound effects'}
-              className="inline-flex items-center justify-center min-w-[40px] min-h-[40px] rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
+              className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
             >
               {soundOn ? (
                 <Volume2 className="w-4 h-4 text-[#C2410C]" aria-hidden="true" />
@@ -1117,7 +1118,7 @@ export function QuizzesSection({
                   [currentQuestion.id]: !prev[currentQuestion.id],
                 }))
               }
-              className={`inline-flex items-center gap-1.5 px-3 min-h-[40px] text-xs font-semibold rounded-lg border transition-colors cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-3 min-h-[44px] text-xs font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap ${
                 flagged[currentQuestion.id]
                   ? 'bg-amber-50 border-amber-300 text-amber-800'
                   : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
@@ -1132,15 +1133,24 @@ export function QuizzesSection({
         {/* Collapsible Mobile Question Navigator Drawer */}
         {mobileNavOpen && (
           <div className="lg:hidden p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-600">
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
               <span className="font-semibold text-slate-900">Jump to Question</span>
-              <button
-                type="button"
-                onClick={() => setPhase('setup')}
-                className="font-semibold text-rose-700 px-2 py-1 cursor-pointer"
-              >
-                Exit Quiz
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPhase('setup')}
+                  className="min-h-[44px] font-semibold text-rose-700 px-3 rounded-lg hover:bg-rose-50 cursor-pointer whitespace-nowrap"
+                >
+                  Exit Quiz
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="min-h-[44px] font-semibold text-slate-700 px-3 rounded-lg bg-white border border-slate-200 cursor-pointer whitespace-nowrap"
+                >
+                  Close
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-5 gap-2">
               {sessionQuestions.map((q, idx) => {
@@ -1165,7 +1175,7 @@ export function QuizzesSection({
                       setCurrentIdx(idx);
                       setMobileNavOpen(false);
                     }}
-                    className={`min-h-[42px] text-xs font-mono tabular-nums font-semibold rounded-lg border cursor-pointer ${cellStyle}`}
+                    className={`min-h-[44px] text-xs font-mono tabular-nums font-semibold rounded-lg border cursor-pointer ${cellStyle}`}
                   >
                     {idx + 1}
                   </button>

@@ -1,6 +1,7 @@
 import { User } from 'firebase/auth';
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -22,6 +23,14 @@ import {
   StudyProgress,
 } from '../data/types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import {
+  BriefingData,
+  ChatMessage,
+  CoachSessionState,
+  HintData,
+  isValidCoachSessionId,
+  sanitizeCoachSession,
+} from './coachSession';
 
 const VALID_MODES = new Set<QuizAttemptRecord['mode']>([
   'drill',
@@ -562,4 +571,404 @@ export function subscribeToUserProgress(
       }
     }
   );
+}
+
+function sanitizeBriefingForFirestore(briefing: BriefingData): Record<string, unknown> {
+  const clean: Record<string, unknown> = {
+    headline: briefing.headline.slice(0, 140),
+    progressUpdate: briefing.progressUpdate.slice(0, 560),
+    pertinentFacts: briefing.pertinentFacts
+      .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+      .slice(0, 5)
+      .map((f) => f.slice(0, 280)),
+    recommendedActionLabel: briefing.recommendedActionLabel.slice(0, 60),
+    recommendedSection: briefing.recommendedSection,
+  };
+  if (typeof briefing.readinessVerdict === 'string' && briefing.readinessVerdict.trim()) {
+    clean.readinessVerdict = briefing.readinessVerdict.slice(0, 260);
+  }
+  if (briefing.recommendedDomain) {
+    clean.recommendedDomain = briefing.recommendedDomain;
+  }
+  if (Array.isArray(briefing.studyPlan) && briefing.studyPlan.length > 0) {
+    clean.studyPlan = briefing.studyPlan.slice(0, 6).map((step) => {
+      const s: Record<string, unknown> = {
+        stepTitle: step.stepTitle.slice(0, 100),
+        reason: step.reason.slice(0, 220),
+        section: step.section,
+        durationLabel: step.durationLabel.slice(0, 32),
+      };
+      if (step.domain) s.domain = step.domain;
+      return s;
+    });
+  }
+  return clean;
+}
+
+function sanitizeHintForFirestore(hint: HintData): Record<string, unknown> {
+  const clean: Record<string, unknown> = {
+    hint: hint.hint.slice(0, 540),
+    examRule: hint.examRule.slice(0, 360),
+  };
+  if (typeof hint.deeperClue === 'string' && hint.deeperClue.trim()) {
+    clean.deeperClue = hint.deeperClue.slice(0, 540);
+  }
+  if (typeof hint.distractorWatchout === 'string' && hint.distractorWatchout.trim()) {
+    clean.distractorWatchout = hint.distractorWatchout.slice(0, 320);
+  }
+  return clean;
+}
+
+function sanitizeChatMessagesForFirestore(messages: ChatMessage[]): Record<string, unknown>[] {
+  return messages.slice(-40).map((m) => {
+    const clean: Record<string, unknown> = {
+      id: m.id.slice(0, 64),
+      role: m.role === 'user' ? 'user' : 'model',
+      text: m.text.slice(0, 2000),
+    };
+    if (Array.isArray(m.followUps) && m.followUps.length > 0) {
+      clean.followUps = m.followUps
+        .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+        .slice(0, 3)
+        .map((f) => f.slice(0, 120));
+    }
+    return clean;
+  });
+}
+
+export function serializeCoachSessionForFirestore(
+  uid: string,
+  session: CoachSessionState,
+  forUpdate = false
+): Record<string, unknown> {
+  const safe = sanitizeCoachSession(session, session.sessionId);
+  const safeSessionId = isValidCoachSessionId(safe.sessionId)
+    ? safe.sessionId
+    : `sess_${Date.now().toString(36)}_cloudprep`;
+
+  const payload: Record<string, unknown> = {
+    ...(forUpdate ? {} : { uid }),
+    sessionId: safeSessionId,
+    hintContextKey: safe.hintContextKey.slice(0, 200),
+    chatMessages: sanitizeChatMessagesForFirestore(safe.chatMessages),
+    completedPlanSteps: safe.completedPlanSteps.slice(0, 12).map((s) => s.slice(0, 120)),
+    updatedAtIso:
+      safe.updatedAtIso.length >= 10 && safe.updatedAtIso.length <= 40
+        ? safe.updatedAtIso
+        : new Date().toISOString(),
+  };
+
+  if (safe.briefing) {
+    payload.briefing = sanitizeBriefingForFirestore(safe.briefing);
+  } else if (forUpdate) {
+    payload.briefing = deleteField();
+  }
+
+  if (safe.hintData) {
+    payload.hintData = sanitizeHintForFirestore(safe.hintData);
+  } else if (forUpdate) {
+    payload.hintData = deleteField();
+  }
+
+  return payload;
+}
+
+export async function loadUserCoachSession(uid: string): Promise<{
+  exists: boolean;
+  data: Record<string, unknown> | null;
+}> {
+  const coachPath = `users/${uid}/coach/current`;
+  try {
+    const snap = await getDoc(doc(db, 'users', uid, 'coach', 'current'));
+    if (snap.exists()) {
+      return {
+        exists: true,
+        data: snap.data() as Record<string, unknown>,
+      };
+    }
+    return { exists: false, data: null };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, coachPath);
+  }
+}
+
+export async function saveUserCoachSession(
+  uid: string,
+  session: CoachSessionState,
+  docExistsOnServer: boolean
+): Promise<boolean> {
+  const coachPath = `users/${uid}/coach/current`;
+  const coachRef = doc(db, 'users', uid, 'coach', 'current');
+
+  try {
+    if (!docExistsOnServer) {
+      const createPayload = serializeCoachSessionForFirestore(uid, session, false);
+      await setDoc(coachRef, {
+        ...createPayload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return true;
+    }
+
+    const updatePayload = serializeCoachSessionForFirestore(uid, session, true);
+    try {
+      await updateDoc(coachRef, {
+        ...updatePayload,
+        updatedAt: serverTimestamp(),
+      });
+      return true;
+    } catch (updateErr: unknown) {
+      const code =
+        updateErr && typeof updateErr === 'object' && 'code' in updateErr
+          ? String((updateErr as { code?: unknown }).code)
+          : '';
+      if (code === 'not-found') {
+        const createPayload = serializeCoachSessionForFirestore(uid, session, false);
+        await setDoc(coachRef, {
+          ...createPayload,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        return true;
+      }
+      throw updateErr;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, coachPath);
+  }
+}
+
+export function subscribeToCoachSession(
+  uid: string,
+  onRemoteUpdate: (data: Record<string, unknown>) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const path = `users/${uid}/coach/current`;
+  const coachRef = doc(db, 'users', uid, 'coach', 'current');
+  return onSnapshot(
+    coachRef,
+    (snap) => {
+      if (snap.exists() && !snap.metadata.hasPendingWrites) {
+        onRemoteUpdate(snap.data() as Record<string, unknown>);
+      }
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, path);
+      } catch (formattedError) {
+        if (onError) {
+          onError(
+            formattedError instanceof Error
+              ? formattedError
+              : new Error(String(formattedError))
+          );
+        } else {
+          throw formattedError;
+        }
+      }
+    }
+  );
+}
+
+export interface ServiceAudioRecord {
+  serviceId: string;
+  title: string;
+  audioUrl: string;
+  cacheKey: string;
+  voiceKey: 'rachel' | 'adam' | 'bella' | 'josh';
+  voiceLabel: string;
+  scriptText: string;
+  scriptProvider: 'deepseek' | 'gemini' | 'curated';
+  audioProvider: 'elevenlabs';
+  byteLength: number;
+}
+
+const VALID_VOICE_KEYS = new Set<ServiceAudioRecord['voiceKey']>([
+  'rachel',
+  'adam',
+  'bella',
+  'josh',
+]);
+const VALID_SCRIPT_PROVIDERS = new Set<ServiceAudioRecord['scriptProvider']>([
+  'deepseek',
+  'gemini',
+  'curated',
+]);
+
+function parseServiceAudioDoc(
+  docId: string,
+  data: Record<string, unknown> | undefined
+): ServiceAudioRecord | null {
+  if (!data) return null;
+  const serviceId =
+    typeof data.serviceId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(data.serviceId)
+      ? data.serviceId
+      : docId;
+  const audioUrl = typeof data.audioUrl === 'string' ? data.audioUrl : '';
+  const cacheKey = typeof data.cacheKey === 'string' ? data.cacheKey : '';
+  if (
+    !/^[a-zA-Z0-9_-]{1,64}$/.test(serviceId) ||
+    !/^(\/api\/audio\/stream\/[a-f0-9]{16,64}|https:\/\/.+)$/.test(audioUrl) ||
+    !/^[a-f0-9]{16,64}$/.test(cacheKey)
+  ) {
+    return null;
+  }
+
+  const voiceKey = VALID_VOICE_KEYS.has(data.voiceKey as ServiceAudioRecord['voiceKey'])
+    ? (data.voiceKey as ServiceAudioRecord['voiceKey'])
+    : 'rachel';
+  const scriptProvider = VALID_SCRIPT_PROVIDERS.has(
+    data.scriptProvider as ServiceAudioRecord['scriptProvider']
+  )
+    ? (data.scriptProvider as ServiceAudioRecord['scriptProvider'])
+    : 'curated';
+
+  return {
+    serviceId,
+    title: typeof data.title === 'string' ? data.title.slice(0, 140) : serviceId,
+    audioUrl: audioUrl.slice(0, 512),
+    cacheKey,
+    voiceKey,
+    voiceLabel: typeof data.voiceLabel === 'string' ? data.voiceLabel.slice(0, 40) : 'Rachel',
+    scriptText: typeof data.scriptText === 'string' ? data.scriptText.slice(0, 1600) : '',
+    scriptProvider,
+    audioProvider: 'elevenlabs',
+    byteLength: clampInt(data.byteLength, 20_000_000),
+  };
+}
+
+export async function loadUserServiceAudioMap(
+  uid: string
+): Promise<Record<string, ServiceAudioRecord>> {
+  const path = `users/${uid}/serviceAudio`;
+  const result: Record<string, ServiceAudioRecord> = {};
+  try {
+    const q = query(
+      collection(db, 'users', uid, 'serviceAudio'),
+      where('uid', '==', uid),
+      limit(100)
+    );
+    const snap = await getDocs(q);
+    snap.forEach((docSnap) => {
+      const parsed = parseServiceAudioDoc(docSnap.id, docSnap.data() as Record<string, unknown>);
+      if (parsed) {
+        result[parsed.serviceId] = parsed;
+      }
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+  return result;
+}
+
+export async function fetchServiceAudioFromFirestore(
+  uid: string,
+  serviceId: string
+): Promise<ServiceAudioRecord | null> {
+  const safeServiceId = serviceId.trim().slice(0, 64);
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(safeServiceId)) return null;
+
+  const docPath = `users/${uid}/serviceAudio/${safeServiceId}`;
+  try {
+    const snap = await getDoc(doc(db, 'users', uid, 'serviceAudio', safeServiceId));
+    if (!snap.exists()) return null;
+    return parseServiceAudioDoc(snap.id, snap.data() as Record<string, unknown>);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, docPath);
+  }
+}
+
+export function subscribeToServiceAudioDoc(
+  uid: string,
+  serviceId: string,
+  onUpdate: (record: ServiceAudioRecord | null) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const safeServiceId = serviceId.trim().slice(0, 64);
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(safeServiceId)) {
+    onUpdate(null);
+    return () => {};
+  }
+
+  const docPath = `users/${uid}/serviceAudio/${safeServiceId}`;
+  const ref = doc(db, 'users', uid, 'serviceAudio', safeServiceId);
+
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onUpdate(null);
+        return;
+      }
+      onUpdate(parseServiceAudioDoc(snap.id, snap.data() as Record<string, unknown>));
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, docPath);
+      } catch (formattedError) {
+        if (onError) {
+          onError(
+            formattedError instanceof Error
+              ? formattedError
+              : new Error(String(formattedError))
+          );
+        } else {
+          throw formattedError;
+        }
+      }
+    }
+  );
+}
+
+export async function saveServiceAudioToFirestore(
+  uid: string,
+  record: ServiceAudioRecord
+): Promise<void> {
+  const safeServiceId = record.serviceId.trim().slice(0, 64);
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(safeServiceId)) return;
+  if (!/^(\/api\/audio\/stream\/[a-f0-9]{16,64}|https:\/\/.+)$/.test(record.audioUrl)) return;
+  if (!/^[a-f0-9]{16,64}$/.test(record.cacheKey)) return;
+
+  const docPath = `users/${uid}/serviceAudio/${safeServiceId}`;
+  const mutableFields = {
+    title: (record.title.trim() || safeServiceId).slice(0, 140),
+    audioUrl: record.audioUrl.slice(0, 512),
+    cacheKey: record.cacheKey.slice(0, 64),
+    voiceKey: VALID_VOICE_KEYS.has(record.voiceKey) ? record.voiceKey : 'rachel',
+    voiceLabel: (record.voiceLabel.trim() || 'Rachel').slice(0, 40),
+    scriptText: (record.scriptText.trim() || record.title.trim() || safeServiceId).slice(0, 1600),
+    scriptProvider: VALID_SCRIPT_PROVIDERS.has(record.scriptProvider)
+      ? record.scriptProvider
+      : 'curated',
+    audioProvider: 'elevenlabs' as const,
+    byteLength: clampInt(record.byteLength, 20_000_000),
+  };
+
+  try {
+    const userAnchorSnap = await getDoc(doc(db, 'users', uid));
+    if (!userAnchorSnap.exists()) {
+      return;
+    }
+
+    const ref = doc(db, 'users', uid, 'serviceAudio', safeServiceId);
+    const existingSnap = await getDoc(ref);
+    if (!existingSnap.exists()) {
+      await setDoc(ref, {
+        uid,
+        serviceId: safeServiceId,
+        ...mutableFields,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return;
+    }
+
+    await updateDoc(ref, {
+      ...mutableFields,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
 }

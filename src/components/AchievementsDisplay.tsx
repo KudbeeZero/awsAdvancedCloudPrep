@@ -333,7 +333,7 @@ export function AchievementsDisplay({
             <button
               type="button"
               onClick={handleClaimAll}
-              className="inline-flex items-center gap-1.5 px-4 min-h-[42px] text-xs font-bold text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.98] rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 min-h-[44px] text-xs font-bold text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.98] rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
               Claim {claimableBadges.length > 1 ? `All (+${claimableTotalXp} XP)` : `+${claimableTotalXp} XP`}
@@ -357,7 +357,7 @@ export function AchievementsDisplay({
                 role="tab"
                 aria-selected={categoryFilter === opt.id}
                 onClick={() => setCategoryFilter(opt.id)}
-                className={`px-3 min-h-[36px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`px-3 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   categoryFilter === opt.id
                     ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
@@ -368,7 +368,7 @@ export function AchievementsDisplay({
             ))}
           </div>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start sm:self-auto">
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start sm:self-auto overflow-x-auto max-w-full no-scrollbar">
             {(
               [
                 { id: 'all', label: 'All' },
@@ -380,7 +380,7 @@ export function AchievementsDisplay({
                 key={tab.id}
                 type="button"
                 onClick={() => setStatusFilter(tab.id)}
-                className={`px-2.5 min-h-[36px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums ${
+                className={`px-2.5 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums ${
                   statusFilter === tab.id
                     ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
@@ -498,7 +498,7 @@ export function AchievementsDisplay({
                     <button
                       type="button"
                       onClick={() => onClaimReward(badge.id, badge.xpReward, badge.title)}
-                      className="w-full min-h-[40px] px-3 text-xs font-bold text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.98] rounded-lg transition-all cursor-pointer"
+                      className="w-full min-h-[44px] px-3 text-xs font-bold text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.98] rounded-lg transition-all cursor-pointer"
                     >
                       Claim +{badge.xpReward} XP
                     </button>

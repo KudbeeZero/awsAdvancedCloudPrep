@@ -25,6 +25,7 @@ import {
   StudyPlanStep,
 } from '../utils/coachSession';
 import { triggerSelectionHaptic } from '../utils/haptics';
+import { ProAudioPlayer } from './ProAudioPlayer';
 
 export type CoachTab = 'briefing' | 'hint' | 'chat';
 
@@ -35,6 +36,12 @@ interface StudyCoachSheetProps {
   unreadUpdatesCount: number;
   snapshot: ProgressSnapshot;
   sessionState: CoachSessionState;
+  cloudSyncStatus?: 'local' | 'connecting' | 'syncing' | 'synced' | 'error';
+  lastSyncedAt?: string | null;
+  isCloudSignedIn?: boolean;
+  pendingChatPrompt?: string | null;
+  onConsumePendingChatPrompt?: () => void;
+  onSyncNow?: () => void;
   onUpdateSession: (updater: (prev: CoachSessionState) => CoachSessionState) => void;
   onNewSession: () => void;
   onOpen: (tab?: CoachTab) => void;
@@ -95,6 +102,12 @@ export function StudyCoachSheet({
   unreadUpdatesCount,
   snapshot,
   sessionState,
+  cloudSyncStatus = 'local',
+  lastSyncedAt = null,
+  isCloudSignedIn = false,
+  pendingChatPrompt = null,
+  onConsumePendingChatPrompt,
+  onSyncNow,
   onUpdateSession,
   onNewSession,
   onOpen,
@@ -127,7 +140,8 @@ export function StudyCoachSheet({
   const hintAbortRef = useRef<AbortController | null>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
 
-  const { sessionId, briefing, hintData, hintContextKey, chatMessages } = sessionState;
+  const { sessionId, briefing, hintData, hintContextKey, chatMessages, completedPlanSteps } =
+    sessionState;
 
   const speechSupported =
     typeof window !== 'undefined' &&
@@ -288,7 +302,7 @@ export function StudyCoachSheet({
       }
       onUpdateSession((prev) =>
         prev.sessionId === activeSessionId
-          ? { ...prev, briefing: nextBriefing }
+          ? { ...prev, briefing: nextBriefing, updatedAtIso: new Date().toISOString() }
           : prev
       );
     } catch (err: unknown) {
@@ -322,7 +336,12 @@ export function StudyCoachSheet({
       }
       onUpdateSession((prev) =>
         prev.sessionId === activeSessionId
-          ? { ...prev, hintData: nextHint, hintContextKey: key }
+          ? {
+              ...prev,
+              hintData: nextHint,
+              hintContextKey: key,
+              updatedAtIso: new Date().toISOString(),
+            }
           : prev
       );
     } catch (err: unknown) {
@@ -393,7 +412,11 @@ export function StudyCoachSheet({
         };
         onUpdateSession((prev) =>
           prev.sessionId === activeSessionId
-            ? { ...prev, chatMessages: [...prev.chatMessages, userMsg] }
+            ? {
+                ...prev,
+                chatMessages: [...prev.chatMessages, userMsg],
+                updatedAtIso: new Date().toISOString(),
+              }
             : prev
         );
         if (!textOverride) setChatInput('');
@@ -504,7 +527,11 @@ export function StudyCoachSheet({
         };
         onUpdateSession((prev) =>
           prev.sessionId === activeSessionId
-            ? { ...prev, chatMessages: [...prev.chatMessages, replyMsg] }
+            ? {
+                ...prev,
+                chatMessages: [...prev.chatMessages, replyMsg],
+                updatedAtIso: new Date().toISOString(),
+              }
             : prev
         );
         setStreamingText('');
@@ -530,9 +557,33 @@ export function StudyCoachSheet({
     [chatInput, chatLoading, sessionId, chatMessages, snapshot, onUpdateSession]
   );
 
+  useEffect(() => {
+    if (isOpen && tab === 'chat' && pendingChatPrompt && !chatLoading) {
+      const prompt = pendingChatPrompt;
+      onConsumePendingChatPrompt?.();
+      void sendChatMessage(prompt);
+    }
+  }, [isOpen, tab, pendingChatPrompt, chatLoading, onConsumePendingChatPrompt, sendChatMessage]);
+
   const handleChatSubmit = (e: FormEvent) => {
     e.preventDefault();
     void sendChatMessage();
+  };
+
+  const handleTogglePlanStep = (stepKey: string) => {
+    triggerSelectionHaptic();
+    const cleanKey = stepKey.trim().slice(0, 120);
+    if (!cleanKey) return;
+    onUpdateSession((prev) => {
+      const exists = prev.completedPlanSteps.includes(cleanKey);
+      return {
+        ...prev,
+        completedPlanSteps: exists
+          ? prev.completedPlanSteps.filter((s) => s !== cleanKey)
+          : [...prev.completedPlanSteps, cleanKey].slice(0, 12),
+        updatedAtIso: new Date().toISOString(),
+      };
+    });
   };
 
   const navigateFromPlan = (section: NavSection, domain?: DomainId | 'all') => {
@@ -663,7 +714,7 @@ export function StudyCoachSheet({
             onOpen('briefing');
           }}
           aria-label="Open Study Coach Agent"
-          className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-40 inline-flex items-center gap-2 px-4 min-h-[46px] rounded-full bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20 active:scale-[0.98] transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C2410C]"
+          className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] right-3 sm:right-4 md:bottom-6 md:right-6 z-40 inline-flex items-center gap-2 px-4 min-h-[46px] rounded-full bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20 active:scale-[0.98] transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C2410C]"
         >
           <Compass className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
           <span className="text-xs sm:text-sm font-semibold whitespace-nowrap tabular-nums">
@@ -675,7 +726,7 @@ export function StudyCoachSheet({
       {/* Backdrop + Responsive Sheet (Bottom Sheet on iPhone, Right Drawer on Desktop) */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-end md:items-stretch justify-end bg-slate-900/45 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[60] flex items-end md:items-stretch justify-end bg-slate-900/45 backdrop-blur-[2px]"
           onClick={onClose}
         >
           <section
@@ -709,6 +760,13 @@ export function StudyCoachSheet({
                   </h2>
                   <p className="text-xs text-slate-500 font-mono tabular-nums truncate">
                     Forecast {snapshot.examForecast.scaledForecast}/1000 · {snapshot.dueFlashcards} cards due
+                    {isCloudSignedIn
+                      ? cloudSyncStatus === 'syncing' || cloudSyncStatus === 'connecting'
+                        ? ' · Syncing...'
+                        : cloudSyncStatus === 'error'
+                        ? ' · Sync paused'
+                        : ' · Cloud Synced'
+                      : ''}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -718,7 +776,7 @@ export function StudyCoachSheet({
                     disabled={briefingLoading || hintLoading || chatLoading}
                     title="Start fresh isolated coach session"
                     aria-label="Start new coach session"
-                    className="inline-flex items-center gap-1 px-2.5 min-h-[40px] rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 cursor-pointer disabled:opacity-40"
+                    className="inline-flex items-center justify-center gap-1 min-w-[44px] px-2.5 min-h-[44px] rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 cursor-pointer disabled:opacity-40"
                   >
                     <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
                     <span className="hidden sm:inline">New Session</span>
@@ -736,12 +794,12 @@ export function StudyCoachSheet({
             </div>
 
             {/* 3-Tab Switcher */}
-            <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-200 shrink-0">
+            <div className="px-4 sm:px-5 py-2.5 bg-slate-50 border-b border-slate-200 shrink-0">
               <div className="grid grid-cols-3 gap-1 p-1 bg-slate-200/70 rounded-lg">
                 <button
                   type="button"
                   onClick={() => handleSwitchTab('briefing')}
-                  className={`min-h-[40px] text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  className={`min-h-[44px] text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                     tab === 'briefing'
                       ? 'bg-white text-slate-900 shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
@@ -752,7 +810,7 @@ export function StudyCoachSheet({
                 <button
                   type="button"
                   onClick={() => handleSwitchTab('hint')}
-                  className={`min-h-[40px] text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  className={`min-h-[44px] text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                     tab === 'hint'
                       ? 'bg-white text-slate-900 shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
@@ -763,7 +821,7 @@ export function StudyCoachSheet({
                 <button
                   type="button"
                   onClick={() => handleSwitchTab('chat')}
-                  className={`min-h-[40px] text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  className={`min-h-[44px] text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                     tab === 'chat'
                       ? 'bg-white text-slate-900 shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
@@ -839,7 +897,7 @@ export function StudyCoachSheet({
                             )
                           }
                           aria-label={speakingId === 'briefing' ? 'Stop audio briefing' : 'Listen to briefing'}
-                          className="inline-flex items-center gap-1 min-h-[36px] px-2.5 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md cursor-pointer"
+                          className="inline-flex items-center gap-1 min-h-[44px] px-2.5 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md cursor-pointer"
                         >
                           {speakingId === 'briefing' ? (
                             <>
@@ -861,7 +919,7 @@ export function StudyCoachSheet({
                           triggerSelectionHaptic();
                           void fetchBriefing();
                         }}
-                        className="inline-flex items-center gap-1.5 min-h-[36px] px-2.5 text-xs font-semibold text-[#C2410C] hover:bg-amber-50 rounded-md cursor-pointer disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 min-h-[44px] px-2.5 text-xs font-semibold text-[#C2410C] hover:bg-amber-50 rounded-md cursor-pointer disabled:opacity-50"
                       >
                         <RefreshCw
                           className={`w-3.5 h-3.5 ${briefingLoading ? 'animate-spin' : ''}`}
@@ -886,7 +944,7 @@ export function StudyCoachSheet({
                       <button
                         type="button"
                         onClick={() => void fetchBriefing()}
-                        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] font-semibold bg-white border border-rose-300 text-rose-800 hover:bg-rose-100 rounded-lg cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 min-h-[44px] font-semibold bg-white border border-rose-300 text-rose-800 hover:bg-rose-100 rounded-lg cursor-pointer"
                       >
                         <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
                         Retry Update
@@ -910,44 +968,103 @@ export function StudyCoachSheet({
                         </p>
                       </div>
 
+                      <ProAudioPlayer
+                        compact
+                        lessonType="coach"
+                        lessonId={`briefing-${sessionId.slice(0, 24)}`}
+                        title={briefing.headline}
+                        summary={`${briefing.readinessVerdict ? `${briefing.readinessVerdict} ` : ''}${briefing.progressUpdate}`}
+                        facts={briefing.pertinentFacts}
+                        examTip={`Next recommended focus: ${briefing.recommendedActionLabel}`}
+                      />
+
                       {briefing.studyPlan && briefing.studyPlan.length > 0 && (
                         <div className="space-y-2.5">
-                          <h4 className="font-display text-xs font-bold text-slate-700">
-                            Recommended Session Queue
-                          </h4>
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="font-display text-xs font-bold text-slate-700">
+                              Recommended Session Queue
+                            </h4>
+                            <span className="text-[11px] font-mono text-slate-500 tabular-nums">
+                              {
+                                briefing.studyPlan.filter((st) =>
+                                  completedPlanSteps.includes(st.stepTitle.slice(0, 120))
+                                ).length
+                              }
+                              /{briefing.studyPlan.length} done
+                            </span>
+                          </div>
                           <div className="space-y-2">
-                            {briefing.studyPlan.map((step: StudyPlanStep, idx: number) => (
-                              <button
-                                key={`${idx}-${step.stepTitle}`}
-                                type="button"
-                                onClick={() => navigateFromPlan(step.section, step.domain)}
-                                className="w-full text-left p-3.5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#C2410C] rounded-xl transition-colors flex items-center justify-between gap-3 cursor-pointer group"
-                              >
-                                <div className="min-w-0 space-y-0.5">
-                                  <div className="flex items-center gap-2 text-xs">
-                                    <span className="font-mono font-bold text-[#C2410C] tabular-nums">
-                                      0{idx + 1}.
+                            {briefing.studyPlan.map((step: StudyPlanStep, idx: number) => {
+                              const stepKey = step.stepTitle.slice(0, 120);
+                              const isDone = completedPlanSteps.includes(stepKey);
+                              return (
+                                <div
+                                  key={`${idx}-${step.stepTitle}`}
+                                  className={`bg-white border rounded-xl transition-colors flex items-stretch overflow-hidden ${
+                                    isDone
+                                      ? 'border-emerald-200 bg-emerald-50/40'
+                                      : 'border-slate-200 hover:border-[#C2410C]'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTogglePlanStep(stepKey)}
+                                    aria-label={
+                                      isDone
+                                        ? `Mark "${step.stepTitle}" incomplete`
+                                        : `Mark "${step.stepTitle}" complete`
+                                    }
+                                    aria-pressed={isDone}
+                                    className="min-w-[44px] px-2 flex items-center justify-center border-r border-slate-100 hover:bg-slate-50 cursor-pointer shrink-0"
+                                  >
+                                    <span
+                                      className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${
+                                        isDone
+                                          ? 'bg-emerald-600 border-emerald-600 text-white'
+                                          : 'border-slate-300 bg-white text-transparent'
+                                      }`}
+                                    >
+                                      <Check className="w-3.5 h-3.5" aria-hidden="true" />
                                     </span>
-                                    <span className="font-semibold text-slate-900 truncate">
-                                      {step.stepTitle}
-                                    </span>
-                                    <span className="text-slate-400" aria-hidden="true">
-                                      ·
-                                    </span>
-                                    <span className="font-mono text-[11px] text-slate-500 whitespace-nowrap shrink-0">
-                                      {step.durationLabel}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-slate-600 leading-snug">
-                                    {step.reason}
-                                  </p>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigateFromPlan(step.section, step.domain)}
+                                    className="flex-1 min-w-0 text-left p-3 hover:bg-slate-50/70 transition-colors flex items-center justify-between gap-3 cursor-pointer group"
+                                  >
+                                    <div className="min-w-0 space-y-0.5">
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <span className="font-mono font-bold text-[#C2410C] tabular-nums">
+                                          0{idx + 1}.
+                                        </span>
+                                        <span
+                                          className={`font-semibold truncate ${
+                                            isDone
+                                              ? 'line-through text-slate-500'
+                                              : 'text-slate-900'
+                                          }`}
+                                        >
+                                          {step.stepTitle}
+                                        </span>
+                                        <span className="text-slate-400" aria-hidden="true">
+                                          ·
+                                        </span>
+                                        <span className="font-mono text-[11px] text-slate-500 whitespace-nowrap shrink-0">
+                                          {step.durationLabel}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-slate-600 leading-snug">
+                                        {step.reason}
+                                      </p>
+                                    </div>
+                                    <ArrowRight
+                                      className="w-4 h-4 text-slate-400 group-hover:text-[#C2410C] shrink-0 transition-colors"
+                                      aria-hidden="true"
+                                    />
+                                  </button>
                                 </div>
-                                <ArrowRight
-                                  className="w-4 h-4 text-slate-400 group-hover:text-[#C2410C] shrink-0 transition-colors"
-                                  aria-hidden="true"
-                                />
-                              </button>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -1007,7 +1124,7 @@ export function StudyCoachSheet({
                         triggerSelectionHaptic();
                         void fetchHint();
                       }}
-                      className="inline-flex items-center gap-1.5 min-h-[36px] px-2.5 text-xs font-semibold text-[#C2410C] hover:bg-amber-50 rounded-md cursor-pointer disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 min-h-[44px] px-2.5 text-xs font-semibold text-[#C2410C] hover:bg-amber-50 rounded-md cursor-pointer disabled:opacity-50"
                     >
                       <Lightbulb className="w-3.5 h-3.5" aria-hidden="true" />
                       Refresh Hint
@@ -1027,7 +1144,7 @@ export function StudyCoachSheet({
                       <button
                         type="button"
                         onClick={() => void fetchHint()}
-                        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] font-semibold bg-white border border-rose-300 text-rose-800 hover:bg-rose-100 rounded-lg cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 min-h-[44px] font-semibold bg-white border border-rose-300 text-rose-800 hover:bg-rose-100 rounded-lg cursor-pointer"
                       >
                         <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
                         Retry Hint
@@ -1206,7 +1323,7 @@ export function StudyCoachSheet({
                                 key={followUp}
                                 type="button"
                                 onClick={() => void sendChatMessage(followUp)}
-                                className="px-3 py-1.5 min-h-[36px] text-xs font-medium text-slate-700 bg-white hover:bg-amber-50/70 border border-slate-200 hover:border-[#C2410C] rounded-lg transition-colors cursor-pointer text-left"
+                                className="px-3 py-2 min-h-[44px] text-xs font-medium text-slate-700 bg-white hover:bg-amber-50/70 border border-slate-200 hover:border-[#C2410C] rounded-lg transition-colors cursor-pointer text-left"
                               >
                                 {followUp}
                               </button>
@@ -1243,7 +1360,7 @@ export function StudyCoachSheet({
                         <button
                           type="button"
                           onClick={() => void sendChatMessage(failedChatPrompt, true)}
-                          className="inline-flex items-center gap-1.5 px-3 min-h-[38px] font-semibold bg-white border border-rose-300 text-rose-800 hover:bg-rose-100 rounded-lg cursor-pointer"
+                          className="inline-flex items-center gap-1.5 px-3 min-h-[44px] font-semibold bg-white border border-rose-300 text-rose-800 hover:bg-rose-100 rounded-lg cursor-pointer"
                         >
                           <RefreshCw className="w-3 h-3" aria-hidden="true" />
                           Retry Message
@@ -1254,12 +1371,40 @@ export function StudyCoachSheet({
                 </div>
               )}
 
-              {/* Subtle Session Privacy Footer Note inside Drawer */}
-              <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 text-[11px] text-slate-400">
-                <ShieldCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  Scoped to CLF-C02 prep · Saved for this browser session only
-                </span>
+              {/* Subtle Session Sync & Privacy Footer Note inside Drawer */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
+                  <span className="truncate">
+                    {isCloudSignedIn
+                      ? cloudSyncStatus === 'error'
+                        ? 'Cloud sync paused · Saved locally'
+                        : cloudSyncStatus === 'syncing' || cloudSyncStatus === 'connecting'
+                        ? 'Syncing Coach to Cloud Firestore...'
+                        : `Synced to Cloud Firestore${
+                            lastSyncedAt
+                              ? ` · ${new Date(lastSyncedAt).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}`
+                              : ''
+                          }`
+                      : 'Scoped to CLF-C02 prep · Sign in on Overview to sync devices'}
+                  </span>
+                </div>
+                {isCloudSignedIn && onSyncNow && (
+                  <button
+                    type="button"
+                    disabled={cloudSyncStatus === 'syncing' || cloudSyncStatus === 'connecting'}
+                    onClick={() => {
+                      triggerSelectionHaptic();
+                      onSyncNow();
+                    }}
+                    className="font-semibold text-[#C2410C] hover:underline whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                  >
+                    {cloudSyncStatus === 'error' ? 'Retry Sync' : 'Sync now'}
+                  </button>
+                )}
               </div>
             </div>
 

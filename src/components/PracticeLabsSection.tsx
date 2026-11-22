@@ -5,6 +5,7 @@ import { PRACTICE_SCENARIOS } from '../data/practiceScenarios';
 import { playFailureSound, playSuccessSound } from '../utils/audio';
 import { triggerCorrectHaptic, triggerIncorrectHaptic, triggerSelectionHaptic } from '../utils/haptics';
 import { ActiveStudyContext } from '../utils/coachProgress';
+import { ProAudioPlayer } from './ProAudioPlayer';
 
 interface PracticeLabsSectionProps {
   completedScenarios: string[];
@@ -187,14 +188,14 @@ export function PracticeLabsSection({
         <div
           role="tablist"
           aria-label="Practice lab views"
-          className="w-full md:w-auto flex items-center p-1 bg-slate-100 border border-slate-200 rounded-lg"
+          className="w-full md:w-auto grid grid-cols-2 md:inline-flex items-center gap-1 p-1 bg-slate-100 border border-slate-200 rounded-lg"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'scenarios'}
             onClick={() => setActiveTab('scenarios')}
-            className={`flex-1 md:flex-initial px-3.5 min-h-[40px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-3 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               activeTab === 'scenarios'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -207,7 +208,7 @@ export function PracticeLabsSection({
             role="tab"
             aria-selected={activeTab === 'pricing-simulator'}
             onClick={() => setActiveTab('pricing-simulator')}
-            className={`flex-1 md:flex-initial px-3.5 min-h-[40px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-3 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               activeTab === 'pricing-simulator'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -309,6 +310,17 @@ export function PracticeLabsSection({
                 <span className="font-semibold text-slate-700">Constraints: </span>
                 {activeScenario.constraints.join(' · ')}
               </p>
+              <div className="mt-4">
+                <ProAudioPlayer
+                  compact
+                  lessonType="lab"
+                  lessonId={activeScenario.id}
+                  title={activeScenario.title}
+                  summary={activeScenario.prompt}
+                  facts={activeScenario.constraints}
+                  examTip={hasPicked ? activeScenario.architecturalTakeaway : undefined}
+                />
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -320,7 +332,7 @@ export function PracticeLabsSection({
                   <button
                     type="button"
                     onClick={onRequestHint}
-                    className="inline-flex items-center gap-1.5 px-3 min-h-[38px] text-xs font-semibold text-[#C2410C] bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3 min-h-[44px] text-xs font-semibold text-[#C2410C] bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                   >
                     <Lightbulb className="w-3.5 h-3.5" aria-hidden="true" />
                     Coach Hint
@@ -448,7 +460,7 @@ export function PracticeLabsSection({
                   {instanceCount} instances
                 </span>
               </div>
-              <div className="py-2">
+              <div className="py-1">
                 <input
                   id="sim-instances"
                   type="range"
@@ -456,7 +468,7 @@ export function PracticeLabsSection({
                   max={40}
                   value={instanceCount}
                   onChange={(e) => setInstanceCount(Number(e.target.value))}
-                  className="w-full h-2 accent-[#C2410C] cursor-pointer"
+                  className="w-full h-8 accent-[#C2410C] cursor-pointer"
                 />
               </div>
             </div>
@@ -470,7 +482,7 @@ export function PracticeLabsSection({
                   {hoursPerMonth} hrs / mo
                 </span>
               </div>
-              <div className="py-2">
+              <div className="py-1">
                 <input
                   id="sim-hours"
                   type="range"
@@ -479,7 +491,7 @@ export function PracticeLabsSection({
                   step={10}
                   value={hoursPerMonth}
                   onChange={(e) => setHoursPerMonth(Number(e.target.value))}
-                  className="w-full h-2 accent-[#C2410C] cursor-pointer"
+                  className="w-full h-8 accent-[#C2410C] cursor-pointer"
                 />
               </div>
             </div>

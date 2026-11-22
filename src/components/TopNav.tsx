@@ -75,7 +75,7 @@ export function TopNav({ activeSection, onNavigate, onStartMockExam }: TopNavPro
                 triggerSelectionHaptic();
                 onStartMockExam();
               }}
-              className="px-3.5 sm:px-4 min-h-[40px] md:min-h-[38px] text-xs sm:text-sm font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.98] rounded-lg transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C2410C]"
+              className="px-3.5 sm:px-4 min-h-[44px] md:min-h-[38px] text-xs sm:text-sm font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-[0.98] rounded-lg transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C2410C]"
             >
               Start Mock Exam
             </button>

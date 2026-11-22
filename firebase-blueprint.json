@@ -192,6 +192,171 @@
         "dateIso",
         "createdAt"
       ]
+    },
+    "CoachSession": {
+      "title": "Study Coach Session",
+      "description": "Cloud-synced Study Coach briefing, active Study Plan checklist, progressive hint state, and Ask Coach conversation history.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owning Firebase Auth UID."
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Coach session identifier."
+        },
+        "briefing": {
+          "type": "object",
+          "description": "Latest personalized Study Coach briefing and recommended study plan."
+        },
+        "hintData": {
+          "type": "object",
+          "description": "Latest contextual progressive Socratic hint."
+        },
+        "hintContextKey": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Context identifier for the active hint."
+        },
+        "chatMessages": {
+          "type": "array",
+          "description": "Bounded Ask Coach message history (max 40)."
+        },
+        "completedPlanSteps": {
+          "type": "array",
+          "description": "Checked-off Recommended Session Queue step keys (max 12)."
+        },
+        "updatedAtIso": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 40,
+          "description": "ISO timestamp of last coach session mutation."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "sessionId",
+        "hintContextKey",
+        "chatMessages",
+        "completedPlanSteps",
+        "updatedAtIso",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ServiceAudio": {
+      "title": "Service Guide Audio Record",
+      "description": "Persisted ElevenLabs synthesized audio URL, cache key, voice metadata, and spoken script for an AWS service guide.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owning Firebase Auth UID."
+        },
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "AWS service guide identifier matching document ID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "description": "AWS service title."
+        },
+        "audioUrl": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 512,
+          "pattern": "^(/api/audio/stream/[a-f0-9]{16,64}|https://.+)$",
+          "description": "Streamable audio URL for the synthesized ElevenLabs MP3."
+        },
+        "cacheKey": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$",
+          "description": "SQLite audio cache hash key."
+        },
+        "voiceKey": {
+          "type": "string",
+          "enum": ["rachel", "adam", "bella", "josh"],
+          "description": "Selected ElevenLabs voice key."
+        },
+        "voiceLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Human-readable ElevenLabs voice label."
+        },
+        "scriptText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1600,
+          "description": "Spoken lesson script synthesized into audio."
+        },
+        "scriptProvider": {
+          "type": "string",
+          "enum": ["deepseek", "gemini", "curated"],
+          "description": "Provider that authored the spoken script."
+        },
+        "audioProvider": {
+          "type": "string",
+          "enum": ["elevenlabs"],
+          "description": "Audio synthesis provider."
+        },
+        "byteLength": {
+          "type": "integer",
+          "description": "MP3 file byte length (0 to 20000000)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "serviceId",
+        "title",
+        "audioUrl",
+        "cacheKey",
+        "voiceKey",
+        "voiceLabel",
+        "scriptText",
+        "scriptProvider",
+        "audioProvider",
+        "byteLength",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -210,6 +375,14 @@
     "/users/{userId}/quizAttempts/{attemptId}": {
       "schema": { "$ref": "#/entities/QuizAttempt" },
       "description": "Per-user quiz and arcade attempt history records."
+    },
+    "/users/{userId}/coach/{docId}": {
+      "schema": { "$ref": "#/entities/CoachSession" },
+      "description": "Cross-device cloud-synced Study Coach session (`current`) belonging to the user."
+    },
+    "/users/{userId}/serviceAudio/{serviceId}": {
+      "schema": { "$ref": "#/entities/ServiceAudio" },
+      "description": "Per-user synthesized ElevenLabs service guide audio URLs and metadata."
     }
   }
 }

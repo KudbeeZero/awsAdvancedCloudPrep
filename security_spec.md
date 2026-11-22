@@ -5,8 +5,8 @@
 1. **Zero Blanket Access**: Every path under `/databases/{database}/documents` defaults to `allow read, write: if false`. No collection permits unauthenticated or cross-user reads/writes.
 2. **Verified Identity**: All reads and writes require `request.auth != null`, `request.auth.token.email_verified == true`, and `request.auth.uid == userId` matching the document's `uid` field.
 3. **PII Isolation**: User email, displayName, and photoUrl are isolated in `/users/{userId}/private/profile` and never stored on the root `/users/{userId}` document or shared paths.
-4. **Master Gate**: Subcollections (`progress/current` and `quizAttempts/{attemptId}`) require the parent `/users/{userId}` root anchor to exist (`exists(...)` on single-doc operations, never inside `allow list`).
-5. **Strict Schemas & Size Caps**: All document writes enforce `keys().hasAll(...)` and `keys().hasOnly(...)`, strict field types, array length bounds (`<= 200` / `<= 100` / `<= 50`), string `.size()` caps, and valid `isValidId()` path segments.
+4. **Master Gate**: Subcollections (`progress/current`, `coach/current`, `serviceAudio/{serviceId}`, and `quizAttempts/{attemptId}`) require the parent `/users/{userId}` root anchor to exist (`exists(...)` on single-doc operations, never inside `allow list`).
+5. **Strict Schemas & Size Caps**: All document writes enforce `keys().hasAll(...)` and `keys().hasOnly(...)`, strict field types, array length bounds (`<= 200` / `<= 100` / `<= 50` / `<= 40` / `<= 12`), string `.size()` caps, and valid `isValidId()` path segments.
 6. **Temporal Integrity & Immutability**: `createdAt` and `updatedAt` must equal `request.time` on create; `uid` and `createdAt` are immutable on update and `updatedAt == request.time`.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
@@ -25,3 +25,5 @@
 | 10 | Invalid enum mode (`mode: 'cheat'`) or impossible score (`scaledScore: 1500`) | `/users/userA/quizAttempts/att_1` | `PERMISSION_DENIED` |
 | 11 | Orphaned subcollection write without parent `/users/{userId}` | `/users/userA/quizAttempts/att_1` | `PERMISSION_DENIED` |
 | 12 | Cross-user `list` query scraping (`auth.uid = userB`) | `/users/userA/quizAttempts` | `PERMISSION_DENIED` |
+| 13 | Cross-user coach session overwrite | `/users/userA/coach/current` | `PERMISSION_DENIED` |
+| 14 | Cross-user or `javascript:` URL injection in serviceAudio | `/users/userA/serviceAudio/ec2` | `PERMISSION_DENIED` |

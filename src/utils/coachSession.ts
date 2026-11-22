@@ -42,6 +42,7 @@ export interface CoachSessionState {
   hintData: HintData | null;
   hintContextKey: string;
   chatMessages: ChatMessage[];
+  completedPlanSteps: string[];
   updatedAtIso: string;
 }
 
@@ -49,15 +50,19 @@ function generateSessionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-  const randomPart = Math.random().toString(36).slice(2, 12);
+  const randomPart = Math.random().toString(36).slice(2, 14).padEnd(12, '0');
   return `sess_${Date.now().toString(36)}_${randomPart}`;
 }
 
+export function isValidCoachSessionId(id: unknown): id is string {
+  return typeof id === 'string' && /^[a-zA-Z0-9_-]{16,64}$/.test(id);
+}
+
 export function getOrCreateCoachSessionId(): string {
-  if (typeof window === 'undefined') return 'ssr-session-placeholder';
+  if (typeof window === 'undefined') return 'ssr_session_placeholder_01';
   try {
     const existing = window.sessionStorage.getItem(ACTIVE_SESSION_ID_KEY);
-    if (existing && /^[a-zA-Z0-9_-]{16,64}$/.test(existing)) {
+    if (isValidCoachSessionId(existing)) {
       return existing;
     }
     const fresh = generateSessionId();
@@ -70,12 +75,142 @@ export function getOrCreateCoachSessionId(): string {
 
 export function createEmptyCoachSession(sessionId: string): CoachSessionState {
   return {
-    sessionId,
+    sessionId: isValidCoachSessionId(sessionId) ? sessionId : generateSessionId(),
     briefing: null,
     hintData: null,
     hintContextKey: '',
     chatMessages: [],
+    completedPlanSteps: [],
     updatedAtIso: new Date().toISOString(),
+  };
+}
+
+export function sanitizeCoachSession(raw: Partial<CoachSessionState> | null | undefined, fallbackSessionId: string): CoachSessionState {
+  if (!raw || typeof raw !== 'object') {
+    return createEmptyCoachSession(fallbackSessionId);
+  }
+
+  const sessionId = isValidCoachSessionId(raw.sessionId)
+    ? raw.sessionId
+    : isValidCoachSessionId(fallbackSessionId)
+    ? fallbackSessionId
+    : generateSessionId();
+
+  const validBriefing =
+    raw.briefing &&
+    typeof raw.briefing === 'object' &&
+    typeof raw.briefing.headline === 'string' &&
+    typeof raw.briefing.progressUpdate === 'string' &&
+    Array.isArray(raw.briefing.pertinentFacts)
+      ? raw.briefing
+      : null;
+
+  const validHint =
+    raw.hintData &&
+    typeof raw.hintData === 'object' &&
+    typeof raw.hintData.hint === 'string' &&
+    typeof raw.hintData.examRule === 'string'
+      ? raw.hintData
+      : null;
+
+  const validChat = Array.isArray(raw.chatMessages)
+    ? raw.chatMessages
+        .filter(
+          (m): m is ChatMessage =>
+            Boolean(m) &&
+            typeof m === 'object' &&
+            typeof m.id === 'string' &&
+            (m.role === 'user' || m.role === 'model') &&
+            typeof m.text === 'string'
+        )
+        .slice(-40)
+    : [];
+
+  const validSteps = Array.isArray(raw.completedPlanSteps)
+    ? Array.from(
+        new Set(
+          raw.completedPlanSteps
+            .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+            .map((s) => s.trim().slice(0, 120))
+        )
+      ).slice(0, 12)
+    : [];
+
+  return {
+    sessionId,
+    briefing: validBriefing,
+    hintData: validHint,
+    hintContextKey: typeof raw.hintContextKey === 'string' ? raw.hintContextKey.slice(0, 200) : '',
+    chatMessages: validChat,
+    completedPlanSteps: validSteps,
+    updatedAtIso:
+      typeof raw.updatedAtIso === 'string' && raw.updatedAtIso.length >= 10
+        ? raw.updatedAtIso.slice(0, 40)
+        : new Date().toISOString(),
+  };
+}
+
+export function mergeCoachSessions(
+  local: CoachSessionState,
+  remoteData: Record<string, unknown> | null
+): CoachSessionState {
+  if (!remoteData) return local;
+  const remote = sanitizeCoachSession(remoteData as Partial<CoachSessionState>, local.sessionId);
+
+  const localHasActivity =
+    Boolean(local.briefing) ||
+    Boolean(local.hintData) ||
+    local.chatMessages.length > 0 ||
+    local.completedPlanSteps.length > 0;
+
+  const remoteHasActivity =
+    Boolean(remote.briefing) ||
+    Boolean(remote.hintData) ||
+    remote.chatMessages.length > 0 ||
+    remote.completedPlanSteps.length > 0;
+
+  if (!localHasActivity && remoteHasActivity) {
+    return remote;
+  }
+  if (!remoteHasActivity && localHasActivity) {
+    if (local.sessionId !== remote.sessionId && remote.updatedAtIso > local.updatedAtIso) {
+      return remote;
+    }
+    return local;
+  }
+
+  // Both have activity (or neither does): reconcile based on sessionId & updatedAtIso
+  if (local.sessionId !== remote.sessionId) {
+    return remote.updatedAtIso >= local.updatedAtIso ? remote : local;
+  }
+
+  const remoteNewer = remote.updatedAtIso >= local.updatedAtIso;
+  const msgMap = new Map<string, ChatMessage>();
+  const ordered = remoteNewer
+    ? [...local.chatMessages, ...remote.chatMessages]
+    : [...remote.chatMessages, ...local.chatMessages];
+  for (const m of ordered) {
+    msgMap.set(m.id, m);
+  }
+
+  const mergedSteps = Array.from(
+    new Set([...remote.completedPlanSteps, ...local.completedPlanSteps])
+  ).slice(0, 12);
+
+  return {
+    sessionId: remote.sessionId,
+    briefing: remoteNewer
+      ? remote.briefing ?? local.briefing
+      : local.briefing ?? remote.briefing,
+    hintData: remoteNewer
+      ? remote.hintData ?? local.hintData
+      : local.hintData ?? remote.hintData,
+    hintContextKey: remoteNewer
+      ? remote.hintContextKey || local.hintContextKey
+      : local.hintContextKey || remote.hintContextKey,
+    chatMessages: Array.from(msgMap.values()).slice(-40),
+    completedPlanSteps: mergedSteps,
+    updatedAtIso: remoteNewer ? remote.updatedAtIso : local.updatedAtIso,
   };
 }
 
@@ -92,42 +227,7 @@ export function loadCoachSessionState(sessionId: string): CoachSessionState {
       return createEmptyCoachSession(sessionId);
     }
 
-    const validBriefing =
-      parsed.briefing &&
-      typeof parsed.briefing.headline === 'string' &&
-      typeof parsed.briefing.progressUpdate === 'string' &&
-      Array.isArray(parsed.briefing.pertinentFacts)
-        ? parsed.briefing
-        : null;
-
-    const validHint =
-      parsed.hintData &&
-      typeof parsed.hintData.hint === 'string' &&
-      typeof parsed.hintData.examRule === 'string'
-        ? parsed.hintData
-        : null;
-
-    const validChat = Array.isArray(parsed.chatMessages)
-      ? parsed.chatMessages
-          .filter(
-            (m): m is ChatMessage =>
-              Boolean(m) &&
-              typeof m.id === 'string' &&
-              (m.role === 'user' || m.role === 'model') &&
-              typeof m.text === 'string'
-          )
-          .slice(-40)
-      : [];
-
-    return {
-      sessionId,
-      briefing: validBriefing,
-      hintData: validHint,
-      hintContextKey: typeof parsed.hintContextKey === 'string' ? parsed.hintContextKey : '',
-      chatMessages: validChat,
-      updatedAtIso:
-        typeof parsed.updatedAtIso === 'string' ? parsed.updatedAtIso : new Date().toISOString(),
-    };
+    return sanitizeCoachSession(parsed, sessionId);
   } catch {
     return createEmptyCoachSession(sessionId);
   }
@@ -139,10 +239,11 @@ export function saveCoachSessionState(state: CoachSessionState): void {
     const bounded: CoachSessionState = {
       ...state,
       chatMessages: state.chatMessages.slice(-40),
-      updatedAtIso: new Date().toISOString(),
+      completedPlanSteps: state.completedPlanSteps.slice(0, 12),
     };
+    window.sessionStorage.setItem(ACTIVE_SESSION_ID_KEY, bounded.sessionId);
     window.sessionStorage.setItem(
-      `${SESSION_DATA_PREFIX}${state.sessionId}`,
+      `${SESSION_DATA_PREFIX}${bounded.sessionId}`,
       JSON.stringify(bounded)
     );
   } catch {

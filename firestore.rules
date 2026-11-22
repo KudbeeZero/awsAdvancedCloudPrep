@@ -210,6 +210,130 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidCoachStepList(listVal, maxLen) {
+      return listVal is list
+        && listVal.size() <= maxLen
+        && (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() >= 1 && listVal[0].size() <= 120));
+    }
+
+    function isValidCoachSession(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'sessionId',
+          'hintContextKey',
+          'chatMessages',
+          'completedPlanSteps',
+          'updatedAtIso',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'sessionId',
+          'briefing',
+          'hintData',
+          'hintContextKey',
+          'chatMessages',
+          'completedPlanSteps',
+          'updatedAtIso',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.sessionId is string
+        && data.sessionId.size() >= 16
+        && data.sessionId.size() <= 64
+        && data.sessionId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.hintContextKey is string
+        && data.hintContextKey.size() <= 200
+        && (!('briefing' in data) || (data.briefing is map && data.briefing.keys().size() <= 10))
+        && (!('hintData' in data) || (data.hintData is map && data.hintData.keys().size() <= 6))
+        && data.chatMessages is list
+        && data.chatMessages.size() <= 40
+        && (data.chatMessages.size() == 0 || data.chatMessages[0] is map)
+        && isValidCoachStepList(data.completedPlanSteps, 12)
+        && data.updatedAtIso is string
+        && data.updatedAtIso.size() >= 10
+        && data.updatedAtIso.size() <= 40
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidServiceAudio(data, userId, serviceId) {
+      return data.keys().hasAll([
+          'uid',
+          'serviceId',
+          'title',
+          'audioUrl',
+          'cacheKey',
+          'voiceKey',
+          'voiceLabel',
+          'scriptText',
+          'scriptProvider',
+          'audioProvider',
+          'byteLength',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'serviceId',
+          'title',
+          'audioUrl',
+          'cacheKey',
+          'voiceKey',
+          'voiceLabel',
+          'scriptText',
+          'scriptProvider',
+          'audioProvider',
+          'byteLength',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.serviceId is string
+        && data.serviceId == serviceId
+        && data.serviceId.size() >= 1
+        && data.serviceId.size() <= 64
+        && data.serviceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 140
+        && data.audioUrl is string
+        && data.audioUrl.size() >= 10
+        && data.audioUrl.size() <= 512
+        && data.audioUrl.matches('^(/api/audio/stream/[a-f0-9]{16,64}|https://.+)$')
+        && data.cacheKey is string
+        && data.cacheKey.size() >= 16
+        && data.cacheKey.size() <= 64
+        && data.cacheKey.matches('^[a-f0-9]+$')
+        && data.voiceKey is string
+        && data.voiceKey in ['rachel', 'adam', 'bella', 'josh']
+        && data.voiceLabel is string
+        && data.voiceLabel.size() >= 1
+        && data.voiceLabel.size() <= 40
+        && data.scriptText is string
+        && data.scriptText.size() >= 1
+        && data.scriptText.size() <= 1600
+        && data.scriptProvider is string
+        && data.scriptProvider in ['deepseek', 'gemini', 'curated']
+        && data.audioProvider is string
+        && data.audioProvider == 'elevenlabs'
+        && data.byteLength is int
+        && data.byteLength >= 0
+        && data.byteLength <= 20000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // Non-PII User Root Anchor
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
@@ -302,6 +426,75 @@ service cloud.firestore {
           && userAnchorExists(userId);
         allow update: if false;
         allow delete: if isValidId(userId) && isValidId(attemptId) && isOwner(userId);
+      }
+
+      // Cross-Device Cloud-Synced Study Coach Session ('current')
+      match /coach/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && docId == 'current' && isOwner(userId);
+        allow list: if false;
+        allow create: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'current'
+          && isOwner(userId)
+          && isValidCoachSession(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow update: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'current'
+          && isOwner(userId)
+          && isValidCoachSession(incoming(), userId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sessionId',
+            'briefing',
+            'hintData',
+            'hintContextKey',
+            'chatMessages',
+            'completedPlanSteps',
+            'updatedAtIso',
+            'updatedAt'
+          ])
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow delete: if isValidId(userId) && isValidId(docId) && docId == 'current' && isOwner(userId);
+      }
+
+      // Per-User Synthesized Service Guide Audio URLs & Metadata
+      match /serviceAudio/{serviceId} {
+        allow get: if isValidId(userId) && isValidId(serviceId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().uid == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(serviceId)
+          && isOwner(userId)
+          && isValidServiceAudio(incoming(), userId, serviceId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow update: if isValidId(userId)
+          && isValidId(serviceId)
+          && isOwner(userId)
+          && isValidServiceAudio(incoming(), userId, serviceId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title',
+            'audioUrl',
+            'cacheKey',
+            'voiceKey',
+            'voiceLabel',
+            'scriptText',
+            'scriptProvider',
+            'audioProvider',
+            'byteLength',
+            'updatedAt'
+          ])
+          && incoming().uid == existing().uid
+          && incoming().serviceId == existing().serviceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && userAnchorExists(userId);
+        allow delete: if isValidId(userId) && isValidId(serviceId) && isOwner(userId);
       }
     }
   }

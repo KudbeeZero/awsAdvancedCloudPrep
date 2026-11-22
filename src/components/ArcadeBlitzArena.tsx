@@ -990,7 +990,7 @@ export function ArcadeBlitzArena({
       }`}
     >
       {/* Unobtrusive Top Arcade HUD */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4 sm:gap-5 font-mono tabular-nums">
           <div>
             <p className="text-[10px] text-slate-400">SCORE</p>
@@ -1017,10 +1017,10 @@ export function ArcadeBlitzArena({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {arcadeMode === 'blitz' ? (
             <div
-              className={`inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-lg border font-mono tabular-nums text-sm font-bold ${
+              className={`inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg border font-mono tabular-nums text-sm font-bold ${
                 secondsLeft <= 10
                   ? 'bg-rose-500/20 border-rose-400 text-rose-300'
                   : 'bg-slate-800 border-slate-700 text-white'
@@ -1030,14 +1030,14 @@ export function ArcadeBlitzArena({
               {secondsLeft}s
             </div>
           ) : arcadeMode === 'daily' ? (
-            <div className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs font-bold tabular-nums text-sky-300">
+            <div className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs font-bold tabular-nums text-sky-300">
               <CalendarCheck className="w-4 h-4 text-sky-400" aria-hidden="true" />
               {Math.min(cardIdx + 1, DAILY_CHALLENGE_COUNT)}/{DAILY_CHALLENGE_COUNT}
             </div>
           ) : (
             <div
               aria-label={`Lives remaining: ${hearts} of ${MAX_HEARTS}`}
-              className="inline-flex items-center gap-1 px-3 min-h-[40px] rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs font-bold tabular-nums"
+              className="inline-flex items-center gap-1 px-3 min-h-[44px] rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs font-bold tabular-nums"
             >
               {Array.from({ length: MAX_HEARTS }).map((_, idx) => (
                 <Heart
@@ -1199,7 +1199,7 @@ export function ArcadeBlitzArena({
             <button
               type="button"
               onClick={stepToNextCard}
-              className="px-3 min-h-[38px] font-semibold bg-white border border-slate-200 rounded-md text-slate-800 shrink-0 cursor-pointer hover:bg-slate-50 whitespace-nowrap"
+              className="px-3.5 min-h-[44px] font-semibold bg-white border border-slate-200 rounded-md text-slate-800 shrink-0 cursor-pointer hover:bg-slate-50 whitespace-nowrap"
             >
               Next
             </button>

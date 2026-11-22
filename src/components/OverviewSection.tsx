@@ -307,7 +307,7 @@ export function OverviewSection({
                   </p>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
                     {user.email && (
-                      <span className="truncate max-w-[230px] sm:max-w-[260px]">
+                      <span className="truncate max-w-full sm:max-w-[260px]">
                         {user.email}
                       </span>
                     )}
@@ -338,7 +338,7 @@ export function OverviewSection({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                 {isEmailVerified && (
                   <button
                     type="button"
@@ -684,7 +684,7 @@ export function OverviewSection({
                       min={todayDateKey}
                       value={examTargetDate}
                       onChange={(e) => handleSaveExamDate(e.target.value)}
-                      className="px-3 min-h-[44px] text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-[#C2410C]"
+                      className="px-3 min-h-[44px] text-base sm:text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-[#C2410C]"
                     />
                     {examTargetDate && (
                       <button
@@ -770,7 +770,7 @@ export function OverviewSection({
                   <button
                     type="button"
                     onClick={() => onStartQuiz('drill', dom.domainId)}
-                    className="font-sans font-semibold text-[#C2410C] hover:underline cursor-pointer"
+                    className="min-h-[36px] px-1 -mr-1 inline-flex items-center font-sans font-semibold text-[#C2410C] hover:underline cursor-pointer"
                   >
                     Drill D{dom.number}
                   </button>
@@ -845,14 +845,14 @@ export function OverviewSection({
                     <button
                       type="button"
                       onClick={() => onNavigate('services', domain.id)}
-                      className="min-h-[40px] inline-flex items-center text-slate-700 hover:text-[#C2410C] transition-colors cursor-pointer"
+                      className="min-h-[44px] inline-flex items-center text-slate-700 hover:text-[#C2410C] transition-colors cursor-pointer"
                     >
                       Study Guide
                     </button>
                     <button
                       type="button"
                       onClick={() => onStartQuiz('drill', domain.id)}
-                      className="min-h-[40px] inline-flex items-center text-[#C2410C] hover:text-[#9A3412] transition-colors cursor-pointer"
+                      className="min-h-[44px] inline-flex items-center text-[#C2410C] hover:text-[#9A3412] transition-colors cursor-pointer"
                     >
                       Quiz Domain
                     </button>
@@ -1058,7 +1058,7 @@ export function OverviewSection({
           <button
             type="button"
             onClick={() => onNavigate('practice')}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#C2410C] hover:text-[#9A3412] cursor-pointer"
+            className="min-h-[44px] inline-flex items-center gap-1.5 text-sm font-semibold text-[#C2410C] hover:text-[#9A3412] cursor-pointer"
           >
             <Layers className="w-4 h-4" aria-hidden="true" />
             Apply in Practice Labs

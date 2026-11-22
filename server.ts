@@ -4,6 +4,27 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import {
+  AudioLessonType,
+  findCachedAudioByLesson,
+  getAudioStorageStats,
+  getCachedAudioByKey,
+  listSavedAudioItems,
+  saveLessonAudio,
+  touchAudioPlayed,
+} from './src/db/audioStore';
+import {
+  buildAudioCacheKey,
+  callDeepSeekChat,
+  ElevenLabsSynthesisError,
+  generateProLessonScript,
+  getDeepSeekApiKey,
+  getElevenLabsApiKey,
+  resolveVoiceOption,
+  scrubSecrets,
+  synthesizeElevenLabsAudio,
+  VOICE_CATALOG,
+} from './src/server/proAudioEngine';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +35,7 @@ const VALID_INTENTS = new Set(['briefing', 'hint', 'chat']);
 const VALID_SECTIONS = new Set(['overview', 'services', 'practice', 'quizzes', 'flashcards']);
 const VALID_DOMAINS = new Set(['domain-1', 'domain-2', 'domain-3', 'domain-4', 'all']);
 const VALID_CONTEXT_TYPES = new Set(['service', 'lab', 'quiz', 'flashcard', 'overview']);
+const VALID_AUDIO_LESSON_TYPES = new Set<AudioLessonType>(['service', 'lab', 'flashcard', 'coach']);
 
 // Stateless-content rate limiter: stores ONLY request timestamps (never user data or messages)
 const SESSION_RATE_WINDOW_MS = 60_000;
@@ -58,13 +80,10 @@ const GEMINI_ATTEMPT_TIMEOUT_MS = 11_000;
 const PRIMARY_COACH_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_COACH_MODEL = 'gemini-3.1-flash-lite';
 
-function getGeminiClient(): GoogleGenAI {
+function getOptionalGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    throw new CoachConfigError(
-      'Study Coach is unavailable because GEMINI_API_KEY is not configured in Settings > Secrets.',
-      503
-    );
+    return null;
   }
   return new GoogleGenAI({
     apiKey,
@@ -75,6 +94,17 @@ function getGeminiClient(): GoogleGenAI {
       },
     },
   });
+}
+
+function getGeminiClient(): GoogleGenAI {
+  const client = getOptionalGeminiClient();
+  if (!client) {
+    throw new CoachConfigError(
+      'Study Coach is unavailable because GEMINI_API_KEY is not configured in Settings > Secrets.',
+      503
+    );
+  }
+  return client;
 }
 
 class CoachTimeoutError extends Error {
@@ -192,11 +222,7 @@ function sanitizeStringArray(value: unknown, maxItems: number, maxItemLen: numbe
 }
 
 function scrubAgentOutput(text: string): string {
-  return text
-    .replace(/AIza[0-9A-Za-z\-_]{20,}/g, '[redacted]')
-    .replace(/GEMINI_API_KEY/gi, '[restricted]')
-    .replace(/process\.env/gi, '[restricted]')
-    .trim();
+  return scrubSecrets(text);
 }
 
 interface SanitizedProgressSnapshot {
@@ -441,10 +467,12 @@ async function startServer() {
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
 
     const reqPath = req.path || '/';
-    if (reqPath.startsWith('/api/')) {
+    if (reqPath.startsWith('/api/audio/stream/')) {
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+    } else if (reqPath.startsWith('/api/')) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
@@ -1167,11 +1195,7 @@ Learner Question: ${userQuestion}`,
               .join('\n')}`
           : '';
 
-      const ai = getGeminiClient();
-      const response = await generateContentWithRetry((model, signal) =>
-        ai.models.generateContent({
-          model,
-          contents: `Generate ${count} brand-new, high-yield AWS Certified Cloud Practitioner (CLF-C02) scenario practice questions.
+      const questionPrompt = `Generate ${count} brand-new, high-yield AWS Certified Cloud Practitioner (CLF-C02) scenario practice questions.
 
 TARGET BLUEPRINT:
 ${domainFocusMap[domainFilter] || domainFocusMap.all}
@@ -1182,75 +1206,116 @@ QUALITY RULES:
 - At most 1 question in the batch may be multiSelect: true (with "(Choose TWO)" at the end of the stem, 5 distinct options, and exactly 2 indices in correctIndices 0..4).
 - Do NOT mention option letters ("Option A", "Choice B") inside explanation or distractorNotes because options are dynamically shuffled on screen; refer to AWS service/concept names instead.
 - Use valid domain IDs strictly from: "domain-1", "domain-2", "domain-3", "domain-4".${
-            domainFilter !== 'all' ? ` All questions MUST have domain="${domainFilter}".` : ''
-          }${exclusionBlock}`,
-          config: {
-            abortSignal: signal,
-            systemInstruction:
-              'You are an AWS Certified Cloud Practitioner (CLF-C02) exam item writer creating accurate, unambiguous practice questions grounded strictly in official AWS CLF-C02 documentation.',
-            ...(model === PRIMARY_COACH_MODEL
-              ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-              : {}),
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                questions: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      domain: {
-                        type: Type.STRING,
-                        description: 'Must be one of: domain-1, domain-2, domain-3, domain-4',
-                      },
-                      multiSelect: {
-                        type: Type.BOOLEAN,
-                        description: 'False for single-answer 4-option question; true for Choose TWO 5-option question.',
-                      },
-                      question: {
-                        type: Type.STRING,
-                        description: 'Clear AWS CLF-C02 scenario question stem.',
-                      },
-                      options: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING },
-                        description: '4 distinct answer options (or 5 if multiSelect is true).',
-                      },
-                      correctIndices: {
-                        type: Type.ARRAY,
-                        items: { type: Type.INTEGER },
-                        description: '0-based indices of correct option(s).',
-                      },
-                      explanation: {
-                        type: Type.STRING,
-                        description: 'Concise 1-2 sentence explanation naming why the correct AWS service/concept fits.',
-                      },
-                      distractorNotes: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING },
-                        description: '2-3 brief notes explaining why key distractor services do not fit.',
+        domainFilter !== 'all' ? ` All questions MUST have domain="${domainFilter}".` : ''
+      }${exclusionBlock}`;
+
+      const ai = getOptionalGeminiClient();
+      let rawModelText: string | undefined;
+
+      if (ai) {
+        try {
+          const response = await generateContentWithRetry((model, signal) =>
+            ai.models.generateContent({
+              model,
+              contents: questionPrompt,
+              config: {
+                abortSignal: signal,
+                systemInstruction:
+                  'You are an AWS Certified Cloud Practitioner (CLF-C02) exam item writer creating accurate, unambiguous practice questions grounded strictly in official AWS CLF-C02 documentation.',
+                ...(model === PRIMARY_COACH_MODEL
+                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                  : {}),
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    questions: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          domain: {
+                            type: Type.STRING,
+                            description: 'Must be one of: domain-1, domain-2, domain-3, domain-4',
+                          },
+                          multiSelect: {
+                            type: Type.BOOLEAN,
+                            description:
+                              'False for single-answer 4-option question; true for Choose TWO 5-option question.',
+                          },
+                          question: {
+                            type: Type.STRING,
+                            description: 'Clear AWS CLF-C02 scenario question stem.',
+                          },
+                          options: {
+                            type: Type.ARRAY,
+                            items: { type: Type.STRING },
+                            description: '4 distinct answer options (or 5 if multiSelect is true).',
+                          },
+                          correctIndices: {
+                            type: Type.ARRAY,
+                            items: { type: Type.INTEGER },
+                            description: '0-based indices of correct option(s).',
+                          },
+                          explanation: {
+                            type: Type.STRING,
+                            description:
+                              'Concise 1-2 sentence explanation naming why the correct AWS service/concept fits.',
+                          },
+                          distractorNotes: {
+                            type: Type.ARRAY,
+                            items: { type: Type.STRING },
+                            description:
+                              '2-3 brief notes explaining why key distractor services do not fit.',
+                          },
+                        },
+                        required: [
+                          'domain',
+                          'multiSelect',
+                          'question',
+                          'options',
+                          'correctIndices',
+                          'explanation',
+                          'distractorNotes',
+                        ],
                       },
                     },
-                    required: [
-                      'domain',
-                      'multiSelect',
-                      'question',
-                      'options',
-                      'correctIndices',
-                      'explanation',
-                      'distractorNotes',
-                    ],
                   },
+                  required: ['questions'],
                 },
               },
-              required: ['questions'],
-            },
-          },
-        })
-      );
+            })
+          );
+          rawModelText = response.text;
+        } catch (geminiErr) {
+          if (!getDeepSeekApiKey()) {
+            throw geminiErr;
+          }
+          console.warn(
+            'Gemini fresh questions failed, falling back to DeepSeek:',
+            geminiErr instanceof Error ? geminiErr.message : geminiErr
+          );
+        }
+      }
 
-      const parsed = parseModelJson(response.text);
+      if (!rawModelText) {
+        if (!getDeepSeekApiKey()) {
+          throw new CoachConfigError(
+            'Fresh question generation requires GEMINI_API_KEY or DEEP_SEEK_API_KEY in Settings > Secrets.',
+            503
+          );
+        }
+        rawModelText = await callDeepSeekChat({
+          systemPrompt:
+            'You are an AWS Certified Cloud Practitioner (CLF-C02) exam item writer. Return strict JSON with shape {"questions":[{"domain":"domain-1"|"domain-2"|"domain-3"|"domain-4","multiSelect":boolean,"question":string,"options":string[],"correctIndices":number[],"explanation":string,"distractorNotes":string[]}]}.',
+          userPrompt: questionPrompt,
+          maxTokens: 1400,
+          temperature: 0.4,
+          jsonMode: true,
+        });
+      }
+
+      const parsed = parseModelJson(rawModelText);
       const rawList = Array.isArray(parsed.questions) ? parsed.questions : [];
       const batchStamp = Date.now().toString(36);
       const CONCRETE_DOMAINS = new Set(['domain-1', 'domain-2', 'domain-3', 'domain-4']);
@@ -1362,12 +1427,286 @@ QUALITY RULES:
     }
   });
 
+  // =========================================================================
+  // Pro Lesson Audio (ElevenLabs + DeepSeek/Gemini Scripts + SQLite Storage)
+  // =========================================================================
+  app.get('/api/audio/status', (_req: Request, res: Response) => {
+    const stats = getAudioStorageStats();
+    res.json({
+      elevenLabsConfigured: Boolean(getElevenLabsApiKey()),
+      deepSeekConfigured: Boolean(getDeepSeekApiKey()),
+      geminiConfigured: Boolean(getOptionalGeminiClient()),
+      sqlBacked: true,
+      savedCount: stats.savedCount,
+      totalBytes: stats.totalBytes,
+      voices: VOICE_CATALOG.map(({ key, label, role }) => ({ key, label, role })),
+    });
+  });
+
+  app.get('/api/audio/saved', (_req: Request, res: Response) => {
+    const items = listSavedAudioItems(250);
+    res.json({
+      sqlBacked: true,
+      items,
+    });
+  });
+
+  app.post('/api/audio/lesson', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    if (!req.is('application/json')) {
+      res.status(415).json({ error: 'Content-Type must be application/json.' });
+      return;
+    }
+
+    try {
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
+        string,
+        unknown
+      >;
+      const sessionId =
+        typeof body.sessionId === 'string' && /^[a-zA-Z0-9_-]{16,64}$/.test(body.sessionId)
+          ? body.sessionId
+          : null;
+
+      if (!sessionId) {
+        res.status(400).json({ error: 'Valid audio sessionId is required.' });
+        return;
+      }
+
+      if (!checkSessionRateLimit(sessionId)) {
+        res.status(429).json({
+          error: 'Too many audio requests in this session. Please pause a moment and try again.',
+          code: 'RATE_LIMITED',
+        });
+        return;
+      }
+
+      const rawLessonType = typeof body.lessonType === 'string' ? body.lessonType.trim() : '';
+      if (!VALID_AUDIO_LESSON_TYPES.has(rawLessonType as AudioLessonType)) {
+        res.status(400).json({ error: 'Invalid audio lessonType.' });
+        return;
+      }
+      const lessonType = rawLessonType as AudioLessonType;
+
+      const lessonId =
+        typeof body.lessonId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(body.lessonId.trim())
+          ? body.lessonId.trim()
+          : null;
+
+      if (!lessonId) {
+        res.status(400).json({ error: 'Valid lessonId is required.' });
+        return;
+      }
+
+      const voice = resolveVoiceOption(body.voiceKey);
+      const title = sanitizeText(body.title, 120);
+      const summary = sanitizeText(body.summary, 700);
+      const facts = sanitizeStringArray(body.facts, 6, 260);
+      const examTip = sanitizeText(body.examTip, 340);
+      const forceRegenerate = Boolean(body.forceRegenerate);
+
+      if (!title || !summary) {
+        res.status(400).json({ error: 'Lesson title and summary are required.' });
+        return;
+      }
+
+      const contentFingerprint = `${title}|${summary}|${facts.join('|')}|${examTip}`;
+      const cacheKey = buildAudioCacheKey(lessonType, lessonId, voice.key, contentFingerprint);
+
+      // 1. Check SQL database cache first (exact match first, then latest matching lesson+voice)
+      if (!forceRegenerate) {
+        const exactHit =
+          getCachedAudioByKey(cacheKey) ||
+          findCachedAudioByLesson(lessonType, lessonId, voice.key);
+        if (exactHit) {
+          touchAudioPlayed(exactHit.cacheKey);
+          res.json({
+            audioMode: 'elevenlabs',
+            cachedInSql: true,
+            needsElevenLabsKey: false,
+            cacheKey: exactHit.cacheKey,
+            audioUrl: `/api/audio/stream/${encodeURIComponent(exactHit.cacheKey)}`,
+            scriptText: exactHit.scriptText,
+            scriptProvider: exactHit.scriptProvider,
+            audioProvider: exactHit.audioProvider,
+            voiceKey: exactHit.voiceKey,
+            voiceLabel: exactHit.voiceLabel,
+            byteLength: exactHit.byteLength,
+            playCount: exactHit.playCount + 1,
+          });
+          return;
+        }
+      }
+
+      // 2. Synthesize crisp spoken script (DeepSeek -> Gemini -> curated)
+      const { scriptText, scriptProvider } = await generateProLessonScript(
+        {
+          lessonType,
+          lessonId,
+          title,
+          summary,
+          facts,
+          examTip: examTip || undefined,
+        },
+        getOptionalGeminiClient
+      );
+
+      // 3. If ELEVEN_LABS_API_KEY is not yet set, return script + browser-fallback gracefully
+      if (!getElevenLabsApiKey()) {
+        res.json({
+          audioMode: 'browser-fallback',
+          cachedInSql: false,
+          needsElevenLabsKey: true,
+          cacheKey: null,
+          audioUrl: null,
+          scriptText,
+          scriptProvider,
+          audioProvider: 'browser-speech',
+          voiceKey: voice.key,
+          voiceLabel: voice.label,
+          byteLength: 0,
+        });
+        return;
+      }
+
+      // 4. Generate ElevenLabs studio audio & persist MP3 BLOB inside SQLite
+      try {
+        const audioBuffer = await synthesizeElevenLabsAudio(scriptText, voice);
+        const saved = saveLessonAudio({
+          cacheKey,
+          lessonType,
+          lessonId,
+          title,
+          voiceKey: voice.key,
+          voiceLabel: voice.label,
+          scriptProvider,
+          scriptText,
+          audioBuffer,
+        });
+
+        res.json({
+          audioMode: 'elevenlabs',
+          cachedInSql: true,
+          newlyGenerated: true,
+          needsElevenLabsKey: false,
+          cacheKey: saved.cacheKey,
+          audioUrl: `/api/audio/stream/${encodeURIComponent(saved.cacheKey)}`,
+          scriptText: saved.scriptText,
+          scriptProvider: saved.scriptProvider,
+          audioProvider: saved.audioProvider,
+          voiceKey: saved.voiceKey,
+          voiceLabel: saved.voiceLabel,
+          byteLength: saved.byteLength,
+          playCount: saved.playCount,
+        });
+        return;
+      } catch (ttsErr: unknown) {
+        const ttsStatus =
+          ttsErr instanceof ElevenLabsSynthesisError ? ttsErr.statusCode : 502;
+        const upstreamMessage =
+          ttsErr instanceof ElevenLabsSynthesisError
+            ? ttsErr.userMessage
+            : 'ElevenLabs studio audio hit a temporary snag.';
+        console.warn(
+          'ElevenLabs synthesis unavailable, returning DeepSeek/Gemini script fallback:',
+          ttsStatus,
+          ttsErr instanceof Error ? ttsErr.message : ttsErr
+        );
+        res.json({
+          audioMode: 'browser-fallback',
+          cachedInSql: false,
+          needsElevenLabsKey: ttsStatus === 401 || ttsStatus === 403,
+          upstreamStatus: ttsStatus,
+          upstreamMessage,
+          cacheKey: null,
+          audioUrl: null,
+          scriptText,
+          scriptProvider,
+          audioProvider: 'browser-speech',
+          voiceKey: voice.key,
+          voiceLabel: voice.label,
+          byteLength: 0,
+        });
+        return;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unable to generate lesson audio.';
+      console.error('Pro audio endpoint error:', message);
+      if (message === 'MISSING_ELEVENLABS_KEY') {
+        res.status(503).json({
+          error: 'Configure ELEVEN_LABS_API_KEY in Settings > Secrets for ElevenLabs studio audio.',
+          code: 'MISSING_ELEVENLABS_KEY',
+        });
+        return;
+      }
+      res.status(502).json({
+        error: 'Studio audio synthesis hit a temporary snag. Please try again.',
+        code: 'AUDIO_UPSTREAM_ERROR',
+      });
+    }
+  });
+
+  app.get('/api/audio/stream/:cacheKey', (req: Request, res: Response) => {
+    const rawKey = typeof req.params.cacheKey === 'string' ? req.params.cacheKey.trim() : '';
+    if (!/^[a-f0-9]{16,64}$/.test(rawKey)) {
+      res.status(400).json({ error: 'Invalid audio cache key.' });
+      return;
+    }
+
+    const stored = getCachedAudioByKey(rawKey);
+    if (!stored) {
+      res.status(404).json({ error: 'Saved lesson audio not found.' });
+      return;
+    }
+
+    const buf = stored.audioBuffer;
+    const total = buf.length;
+    res.setHeader('Content-Type', stored.mimeType || 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    const rangeHeader = req.headers.range;
+    if (typeof rangeHeader === 'string' && rangeHeader.startsWith('bytes=')) {
+      const [startRaw, endRaw] = rangeHeader.replace(/^bytes=/, '').split('-');
+      const start = startRaw ? Number.parseInt(startRaw, 10) : 0;
+      const end = endRaw ? Number.parseInt(endRaw, 10) : total - 1;
+
+      if (
+        !Number.isFinite(start) ||
+        !Number.isFinite(end) ||
+        start < 0 ||
+        end >= total ||
+        start > end
+      ) {
+        res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
+        return;
+      }
+
+      const chunk = buf.subarray(start, end + 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', String(chunk.length));
+      res.end(chunk);
+      return;
+    }
+
+    res.status(200);
+    res.setHeader('Content-Length', String(total));
+    res.end(buf);
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
+    const disableHmr = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        ws: { server: httpServer },
+        ws: disableHmr ? false : { server: httpServer },
+        ...(disableHmr ? { hmr: false } : {}),
       },
       appType: 'spa',
     });
@@ -1403,9 +1742,17 @@ QUALITY RULES:
     });
   }
 
+  httpServer.on('error', (err) => {
+    console.error('HTTP server error:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`CloudPrep CLF-C02 server running on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Failed to start CloudPrep CLF-C02 server:', err instanceof Error ? err.message : err);
+  process.exit(1);
+});

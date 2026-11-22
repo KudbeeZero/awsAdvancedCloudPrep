@@ -29,7 +29,7 @@ export function PWAInstallButton() {
             setShowIOSGuide(true);
           }
         }}
-        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        className="inline-flex items-center gap-1.5 px-3 min-h-[44px] text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
       >
         {isIOS ? (
           <>
@@ -49,7 +49,7 @@ export function PWAInstallButton() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="ios-install-title"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4"
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]"
           onClick={() => setShowIOSGuide(false)}
         >
           <div
@@ -72,7 +72,7 @@ export function PWAInstallButton() {
                 type="button"
                 onClick={() => setShowIOSGuide(false)}
                 aria-label="Close installation guide"
-                className="min-w-[40px] min-h-[40px] inline-flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 cursor-pointer"
+                className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>

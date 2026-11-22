@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Search,
   Shield,
+  Volume2,
   X,
   XCircle,
 } from 'lucide-react';
@@ -16,12 +17,19 @@ import {
   SUPPORT_PLANS,
 } from '../data/awsServices';
 import { DomainId, ResponsibilityOwner, ServiceCategory } from '../data/types';
+import { useAuth } from '../context/AuthContext';
+import { useAudioPlayer } from '../context/AudioPlayerContext';
 import { playFailureSound, playNeutralTap, playSuccessSound } from '../utils/audio';
+import { loadUserServiceAudioMap, ServiceAudioRecord } from '../utils/cloudSync';
 import { triggerCorrectHaptic, triggerIncorrectHaptic, triggerSelectionHaptic } from '../utils/haptics';
 import { ActiveStudyContext } from '../utils/coachProgress';
+import { AUDIO_SAVED_EVENT, fetchSavedAudioSet } from '../utils/proAudioClient';
+import { LessonAudioPlayer } from './LessonAudioPlayer';
 
 interface ServiceGuideSectionProps {
   initialDomainFilter?: DomainId | 'all';
+  requestedServiceId?: string | null;
+  onClearRequestedService?: () => void;
   reviewedServices: string[];
   onToggleReviewed: (serviceId: string) => void;
   onStartDomainQuiz: (domain: DomainId) => void;
@@ -43,24 +51,137 @@ const CATEGORIES: ('All' | ServiceCategory)[] = [
   'Billing & Support',
 ];
 
+const SR_AUDIO_FACTS = [
+  'IaaS EC2: Customer patches guest OS and configures Security Groups',
+  'Managed RDS and Lambda: AWS patches the underlying OS and runtime',
+  'IAM, MFA, and data classification are always Customer responsibilities',
+];
+
+const SUPPORT_PLAN_AUDIO_FACTS = [
+  'Basic is free with 24/7 billing and account support only',
+  'Developer offers business-hours email technical support (12-hr SLA)',
+  'Business unlocks 24/7 chat/phone, 1-hr Urgent SLA, and full Trusted Advisor checks',
+  'Enterprise adds a dedicated Technical Account Manager (TAM) and 15-min Business-Critical SLA',
+];
+
 export function ServiceGuideSection({
   initialDomainFilter = 'all',
+  requestedServiceId = null,
+  onClearRequestedService,
   reviewedServices,
   onToggleReviewed,
   onStartDomainQuiz,
   onContextChange,
   onAskCoach,
 }: ServiceGuideSectionProps) {
+  const { user, isAuthReady } = useAuth();
+  const audioCtx = useAudioPlayer();
   const [subTab, setSubTab] = useState<GuideSubTab>('catalog');
   const [searchQuery, setSearchQuery] = useState('');
   const [domainFilter, setDomainFilter] = useState<DomainId | 'all'>(initialDomainFilter);
   const [categoryFilter, setCategoryFilter] = useState<'All' | ServiceCategory>('All');
-  const [selectedServiceId, setSelectedServiceId] = useState<string>(AWS_SERVICES[0].id);
-  const [mobileShowDetail, setMobileShowDetail] = useState<boolean>(false);
+  const initialActiveAudioId =
+    initialDomainFilter === 'all' &&
+    audioCtx.activeLesson?.isSeriesLesson &&
+    AWS_SERVICES.some((s) => s.id === audioCtx.activeLesson?.serviceId)
+      ? audioCtx.activeLesson.serviceId
+      : null;
+
+  const [selectedServiceId, setSelectedServiceId] = useState<string>(
+    requestedServiceId || initialActiveAudioId || AWS_SERVICES[0].id
+  );
+  const [mobileShowDetail, setMobileShowDetail] = useState<boolean>(
+    Boolean(requestedServiceId || (initialActiveAudioId && (audioCtx.isPlaying || audioCtx.isSpeechPlaying)))
+  );
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true
+  );
 
   // Shared Responsibility Interactive Drill state
   const [srGuesses, setSrGuesses] = useState<Record<string, ResponsibilityOwner>>({});
   const [diagramError, setDiagramError] = useState(false);
+  const [savedAudioKeys, setSavedAudioKeys] = useState<Set<string>>(() => new Set());
+  const [firestoreAudioMap, setFirestoreAudioMap] = useState<Record<string, ServiceAudioRecord>>({});
+
+  // Jump directly to a requested service (e.g. tapping the GlobalAudioMiniPlayer)
+  useEffect(() => {
+    if (!requestedServiceId) return;
+    if (requestedServiceId === 'shared-responsibility-model') {
+      setSubTab('shared-responsibility');
+      onClearRequestedService?.();
+      return;
+    }
+    if (requestedServiceId === 'aws-support-plans') {
+      setSubTab('support-plans');
+      onClearRequestedService?.();
+      return;
+    }
+    if (AWS_SERVICES.some((s) => s.id === requestedServiceId)) {
+      setSubTab('catalog');
+      setDomainFilter('all');
+      setCategoryFilter('All');
+      setSearchQuery('');
+      setSelectedServiceId(requestedServiceId);
+      setMobileShowDetail(true);
+    }
+    onClearRequestedService?.();
+  }, [requestedServiceId, onClearRequestedService]);
+
+  // Keep ServiceGuide selected item synced when Auto-Play / Lock Screen Next Track advances
+  useEffect(() => {
+    return audioCtx.subscribeAdvanceListener((nextId) => {
+      if (AWS_SERVICES.some((s) => s.id === nextId)) {
+        setSelectedServiceId(nextId);
+      }
+    });
+  }, [audioCtx.subscribeAdvanceListener]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const onChange = (event: MediaQueryListEvent) => setIsDesktop(event.matches);
+    setIsDesktop(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const refresh = () => {
+      void fetchSavedAudioSet().then((keys) => {
+        if (mounted) setSavedAudioKeys(keys);
+      });
+    };
+    refresh();
+    window.addEventListener(AUDIO_SAVED_EVENT, refresh);
+    return () => {
+      mounted = false;
+      window.removeEventListener(AUDIO_SAVED_EVENT, refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+    if (!user || !user.emailVerified) {
+      setFirestoreAudioMap({});
+      return;
+    }
+
+    let cancelled = false;
+    void loadUserServiceAudioMap(user.uid)
+      .then((loadedMap) => {
+        if (!cancelled) {
+          setFirestoreAudioMap(loadedMap);
+        }
+      })
+      .catch((err) => {
+        console.error('Unable to load saved service audio URLs from Firestore:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthReady, user]);
 
   const filteredServices = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -84,6 +205,11 @@ export function ServiceGuideSection({
 
   const activeDomainObj = EXAM_DOMAINS.find((d) => d.id === activeService.domain);
   const isReviewed = reviewedServices.includes(activeService.id);
+  const isCatalogDetailOpen = subTab === 'catalog' && (isDesktop || mobileShowDetail);
+  const activeFacts = useMemo(
+    () => [...activeService.keyFeatures.slice(0, 2), ...activeService.examScenarios.slice(0, 2)],
+    [activeService]
+  );
 
   useEffect(() => {
     if (subTab === 'shared-responsibility') {
@@ -148,14 +274,14 @@ export function ServiceGuideSection({
         <div
           role="tablist"
           aria-label="Study guide sections"
-          className="w-full md:w-auto flex items-center p-1 bg-slate-100 border border-slate-200 rounded-lg overflow-x-auto no-scrollbar"
+          className="w-full md:w-auto grid grid-cols-3 md:inline-flex items-center gap-1 p-1 bg-slate-100 border border-slate-200 rounded-lg"
         >
           <button
             type="button"
             role="tab"
             aria-selected={subTab === 'catalog'}
             onClick={() => setSubTab('catalog')}
-            className={`flex-1 md:flex-initial px-3 min-h-[40px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-2 sm:px-3 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               subTab === 'catalog'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -168,7 +294,7 @@ export function ServiceGuideSection({
             role="tab"
             aria-selected={subTab === 'shared-responsibility'}
             onClick={() => setSubTab('shared-responsibility')}
-            className={`flex-1 md:flex-initial px-3 min-h-[40px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-2 sm:px-3 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               subTab === 'shared-responsibility'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -181,7 +307,7 @@ export function ServiceGuideSection({
             role="tab"
             aria-selected={subTab === 'support-plans'}
             onClick={() => setSubTab('support-plans')}
-            className={`flex-1 md:flex-initial px-3 min-h-[40px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-2 sm:px-3 min-h-[44px] text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               subTab === 'support-plans'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -255,7 +381,7 @@ export function ServiceGuideSection({
                     key={cat}
                     type="button"
                     onClick={() => setCategoryFilter(cat)}
-                    className={`px-3 min-h-[40px] text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    className={`px-3 min-h-[44px] text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       active
                         ? 'bg-slate-900 text-white'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
@@ -325,6 +451,13 @@ export function ServiceGuideSection({
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {(savedAudioKeys.has(`service:${svc.id}`) ||
+                          Boolean(firestoreAudioMap[svc.id])) && (
+                          <Volume2
+                            className="w-3.5 h-3.5 text-[#C2410C]"
+                            aria-label="Audio saved"
+                          />
+                        )}
                         {done && (
                           <Check
                             className="w-4 h-4 text-emerald-700"
@@ -395,6 +528,36 @@ export function ServiceGuideSection({
                     {isReviewed ? 'Reviewed' : 'Mark Reviewed'}
                   </button>
                 </div>
+
+                {isCatalogDetailOpen && (
+                  <LessonAudioPlayer
+                    serviceId={activeService.id}
+                    title={activeService.name}
+                    domainTitle={
+                      activeDomainObj
+                        ? `Domain ${activeDomainObj.number}: ${activeDomainObj.title}`
+                        : 'AWS Service Guide'
+                    }
+                    summary={`${activeService.oneLiner} ${activeService.description}`}
+                    facts={activeFacts}
+                    examTip={
+                      activeService.compareWith
+                        ? `Pricing: ${activeService.pricingModel}. Contrast: ${activeService.compareWith}`
+                        : `Pricing: ${activeService.pricingModel}`
+                    }
+                    autoSynthesize={isCatalogDetailOpen}
+                    isSeriesLesson
+                    prevServiceId={prevService?.id}
+                    nextServiceId={nextService?.id}
+                    nextLessonTitle={nextService?.name}
+                    onNextLesson={
+                      nextService ? () => handleSelectService(nextService.id) : undefined
+                    }
+                    onAudioReady={(record) =>
+                      setFirestoreAudioMap((prev) => ({ ...prev, [record.serviceId]: record }))
+                    }
+                  />
+                )}
 
                 <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
                   {activeService.description}
@@ -521,6 +684,21 @@ export function ServiceGuideSection({
                   <strong className="text-slate-900">Customer (IN the Cloud):</strong> Customer data,
                   IAM/MFA, encryption choices, firewall rules, and EC2 guest OS patches.
                 </p>
+                <div className="pt-2">
+                  <LessonAudioPlayer
+                    compact
+                    serviceId="shared-responsibility-model"
+                    title="AWS Shared Responsibility Model"
+                    summary="Security OF the Cloud is AWS responsibility covering physical facilities, hardware, and managed infrastructure. Security IN the Cloud is customer responsibility covering data, IAM, encryption, and guest OS patching."
+                    facts={SR_AUDIO_FACTS}
+                    examTip="Remember: AWS protects the cloud infrastructure; you protect what you put inside it."
+                    autoSynthesize={subTab === 'shared-responsibility'}
+                    showAutoPlay={false}
+                    onAudioReady={(record) =>
+                      setFirestoreAudioMap((prev) => ({ ...prev, [record.serviceId]: record }))
+                    }
+                  />
+                </div>
               </div>
             </div>
 
@@ -542,7 +720,7 @@ export function ServiceGuideSection({
                     <button
                       type="button"
                       onClick={() => setSrGuesses({})}
-                      className="text-[#C2410C] hover:underline cursor-pointer font-sans font-semibold min-h-[36px] px-2"
+                      className="text-[#C2410C] hover:underline cursor-pointer font-sans font-semibold min-h-[44px] px-2.5"
                     >
                       Clear
                     </button>
@@ -630,6 +808,18 @@ export function ServiceGuideSection({
       {/* TAB 3: SUPPORT PLANS COMPARISON (Cards on Mobile, Table on Desktop) */}
       {subTab === 'support-plans' && (
         <div className="space-y-4">
+          <LessonAudioPlayer
+            serviceId="aws-support-plans"
+            title="AWS Support Plans & SLAs"
+            summary="Compare Basic, Developer, Business, Enterprise On-Ramp, and Enterprise Support plans for Domain 4 billing and support scenarios."
+            facts={SUPPORT_PLAN_AUDIO_FACTS}
+            examTip="Exam rule: Full Trusted Advisor starts at Business; a dedicated TAM requires Enterprise (or pooled TAM on On-Ramp)."
+            autoSynthesize={subTab === 'support-plans'}
+            showAutoPlay={false}
+            onAudioReady={(record) =>
+              setFirestoreAudioMap((prev) => ({ ...prev, [record.serviceId]: record }))
+            }
+          />
           {/* Mobile Vertical Cards (< md) */}
           <div className="md:hidden space-y-4">
             {SUPPORT_PLANS.map((plan) => (
